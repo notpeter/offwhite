@@ -2,6 +2,9 @@
 
 Check and fix trailing whitespace and final newlines, driven by `.editorconfig`.
 
+> [!NOTE]
+> Work in progress
+
 ## Usage
 
 ```
