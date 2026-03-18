@@ -1,3 +1,4 @@
+mod ignores;
 #[cfg(test)]
 mod tests;
 
@@ -28,6 +29,10 @@ pub enum Verbosity {
     about = "Check and fix trailing whitespace and final newlines"
 )]
 struct Cli {
+    /// Create a default .editorconfig in the current directory
+    #[arg(long, conflicts_with_all = ["fix", "check"])]
+    init: bool,
+
     /// Check for violations (default)
     #[arg(long, conflicts_with = "fix")]
     check: bool,
@@ -223,14 +228,17 @@ pub fn fix_file(path: &Path, policy: FilePolicy) -> Result<(), Box<dyn std::erro
     Ok(())
 }
 
-/// Default ignore patterns applied to all walks and glob results.
-const DEFAULT_IGNORE_GLOBS: &[&str] = &["!.git/", "!*.patch", "!*.diff", "!*.rej", "!*.patchset"];
-
 fn build_overrides(base: &Path, include_glob: Option<&str>) -> ignore::overrides::Override {
     let mut builder = OverrideBuilder::new(base);
-    for pat in DEFAULT_IGNORE_GLOBS {
+    builder
+        .case_insensitive(true)
+        .expect("failed to set case insensitive");
+    for pat in ignores::DEFAULT_GLOBS {
         builder.add(pat).expect("invalid default ignore glob");
     }
+    builder
+        .case_insensitive(false)
+        .expect("failed to reset case insensitive");
     if let Some(glob) = include_glob {
         builder.add(glob).expect("invalid include glob");
     }
@@ -289,8 +297,31 @@ fn walk_dir(
     }
 }
 
+const DEFAULT_EDITORCONFIG: &str = "\
+root = true
+
+[*]
+end_of_line = lf
+trim_trailing_whitespace = true
+insert_final_newline = true
+";
+
 fn main() -> ExitCode {
     let cli = Cli::parse();
+
+    if cli.init {
+        let path = Path::new(".editorconfig");
+        if path.exists() {
+            eprintln!("error: .editorconfig already exists");
+            return ExitCode::FAILURE;
+        }
+        if let Err(e) = fs::write(path, DEFAULT_EDITORCONFIG) {
+            eprintln!("error: failed to write .editorconfig: {e}");
+            return ExitCode::FAILURE;
+        }
+        println!("Created .editorconfig");
+        return ExitCode::SUCCESS;
+    }
 
     let verbosity = if cli.quiet {
         Verbosity::Quiet
