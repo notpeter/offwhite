@@ -36,7 +36,7 @@ fn walk_dir(
 }
 
 pub(crate) fn contains_glob_meta(s: &str) -> bool {
-    s.contains('*') || s.contains('?') || s.contains('[')
+    s.contains('*') || s.contains('?') || s.contains('[') || s.contains('{')
 }
 
 pub(crate) fn resolve_paths(patterns: &[String], respect_gitignore: bool) -> Vec<PathBuf> {

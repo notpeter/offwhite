@@ -7,11 +7,10 @@ mod violation;
 #[cfg(test)]
 mod tests;
 
-use std::collections::BTreeSet;
-use std::path::{Path, PathBuf};
+use std::path::PathBuf;
 use std::process::ExitCode;
 
-use crate::action::{check_file, contains_glob_meta, fix_file, resolve_paths};
+use crate::action::{check_file, fix_file, resolve_paths};
 use crate::configs::{discover_editorconfigs, file_policy};
 use crate::inits::{init_editorconfig, init_ignore_revs};
 
@@ -22,6 +21,15 @@ pub enum Verbosity {
     Quiet,
     Normal,
     Verbose,
+}
+
+#[derive(Clone, Copy, Default, PartialEq, Eq)]
+pub(crate) enum Action {
+    Init,
+    InitIgnoreRevs,
+    #[default]
+    Check,
+    Fix,
 }
 
 #[derive(Parser)]
@@ -70,30 +78,51 @@ pub(crate) struct Cli {
     paths: Vec<String>,
 }
 
-fn main() -> ExitCode {
-    let cli = Cli::parse();
-
-    if cli.init {
-        match init_editorconfig() {
-            true => return ExitCode::SUCCESS,
-            false => return ExitCode::FAILURE,
+impl Cli {
+    fn action(&self) -> Action {
+        if self.init {
+            Action::Init
+        } else if self.init_ignore_revs {
+            Action::InitIgnoreRevs
+        } else if self.fix {
+            Action::Fix
+        } else {
+            Action::Check
         }
     }
 
-    if cli.init_ignore_revs {
-        match init_ignore_revs() {
-            true => return ExitCode::SUCCESS,
-            false => return ExitCode::FAILURE,
-        };
+    fn verbosity(&self) -> Verbosity {
+        match (self.quiet, self.verbose) {
+            (true, _) => Verbosity::Quiet,
+            (_, true) => Verbosity::Verbose,
+            _ => Verbosity::Normal,
+        }
+    }
+}
+
+fn main() -> ExitCode {
+    let cli = Cli::parse();
+    let action = cli.action();
+
+    match action {
+        Action::Init => {
+            return if init_editorconfig() {
+                ExitCode::SUCCESS
+            } else {
+                ExitCode::FAILURE
+            };
+        }
+        Action::InitIgnoreRevs => {
+            return if init_ignore_revs() {
+                ExitCode::SUCCESS
+            } else {
+                ExitCode::FAILURE
+            };
+        }
+        Action::Check | Action::Fix => {}
     }
 
-    let verbosity = if cli.quiet {
-        Verbosity::Quiet
-    } else if cli.verbose {
-        Verbosity::Verbose
-    } else {
-        Verbosity::Normal
-    };
+    let verbosity = cli.verbosity();
 
     // Discover .editorconfig files from the current directory upward.
     let cwd = std::env::current_dir().unwrap_or_else(|_| PathBuf::from("."));
@@ -104,44 +133,6 @@ fn main() -> ExitCode {
             eprintln!("warning: no .editorconfig files found; nothing checked");
         }
         return ExitCode::FAILURE;
-    }
-
-    // Log discovered .editorconfig files.
-    if verbosity >= Verbosity::Verbose {
-        for ec in &editorconfigs {
-            eprintln!("info: using {}", ec.display());
-        }
-    }
-
-    // Warn about .editorconfig files in parent directories.
-    if verbosity >= Verbosity::Normal {
-        // Collect unique parent dirs from CLI paths to determine what counts as "parent".
-        let mut roots = BTreeSet::new();
-        for pattern in &cli.paths {
-            if contains_glob_meta(pattern) {
-                roots.insert(cwd.clone());
-            } else {
-                let p = PathBuf::from(pattern);
-                let dir = if p.is_file() {
-                    p.parent().map(Path::to_path_buf).unwrap_or(cwd.clone())
-                } else {
-                    p.clone()
-                };
-                roots.insert(dir.canonicalize().unwrap_or(dir));
-            }
-        }
-
-        for ec in &editorconfigs {
-            let ec_dir = ec.parent().unwrap_or(Path::new("."));
-            let ec_dir = ec_dir.canonicalize().unwrap_or(ec_dir.to_path_buf());
-            let is_parent = roots.iter().all(|root| ec_dir != *root);
-            if is_parent {
-                eprintln!(
-                    "warning: using .editorconfig from parent directory: {}",
-                    ec.display()
-                );
-            }
-        }
     }
 
     let files = resolve_paths(&cli.paths, !cli.no_gitignore);
@@ -162,13 +153,14 @@ fn main() -> ExitCode {
             continue;
         }
 
-        if cli.fix {
-            if let Err(e) = fix_file(path, policy) {
-                eprintln!("{}: error fixing: {e}", path.display());
-                found_violations = true;
+        match action {
+            Action::Fix => {
+                if let Err(e) = fix_file(path, policy) {
+                    eprintln!("{}: error fixing: {e}", path.display());
+                    found_violations = true;
+                }
             }
-        } else {
-            match check_file(path, policy) {
+            Action::Check => match check_file(path, policy) {
                 Ok(violations) => {
                     for v in &violations {
                         println!("{v}");
@@ -181,7 +173,8 @@ fn main() -> ExitCode {
                     eprintln!("{}: error: {e}", path.display());
                     found_violations = true;
                 }
-            }
+            },
+            Action::Init | Action::InitIgnoreRevs => unreachable!(),
         }
     }
 
