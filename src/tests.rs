@@ -2,26 +2,42 @@ use std::fs;
 use std::path::Path;
 use tempfile::TempDir;
 
-use crate::{FilePolicy, ViolationKind, check_file, fix_file};
+use crate::{check_file, configs::FilePolicy, fix_file, violation::ViolationKind};
 
 const ALL_CHECKS: FilePolicy = FilePolicy {
     trim_trailing_whitespace: true,
     insert_final_newline: true,
+    single_final_newline: false,
+};
+
+const ALL_CHECKS_SINGLE: FilePolicy = FilePolicy {
+    trim_trailing_whitespace: true,
+    insert_final_newline: true,
+    single_final_newline: true,
 };
 
 const TRIM_ONLY: FilePolicy = FilePolicy {
     trim_trailing_whitespace: true,
     insert_final_newline: false,
+    single_final_newline: false,
 };
 
 const NEWLINE_ONLY: FilePolicy = FilePolicy {
     trim_trailing_whitespace: false,
     insert_final_newline: true,
+    single_final_newline: false,
+};
+
+const NEWLINE_ONLY_SINGLE: FilePolicy = FilePolicy {
+    trim_trailing_whitespace: false,
+    insert_final_newline: true,
+    single_final_newline: true,
 };
 
 const NO_CHECKS: FilePolicy = FilePolicy {
     trim_trailing_whitespace: false,
     insert_final_newline: false,
+    single_final_newline: false,
 };
 
 fn write_temp(dir: &Path, name: &str, contents: &str) -> std::path::PathBuf {
@@ -46,7 +62,10 @@ fn check_trailing_whitespace() {
     let path = write_temp(dir.path(), "ws.rs", "hello   \nworld\n");
     let violations = check_file(&path, ALL_CHECKS).unwrap();
     assert_eq!(violations.len(), 1);
-    assert!(matches!(violations[0].kind, ViolationKind::TrailingWhitespace));
+    assert!(matches!(
+        violations[0].kind,
+        ViolationKind::TrailingWhitespace
+    ));
     assert_eq!(violations[0].line, 1);
 }
 
@@ -71,7 +90,10 @@ fn check_trailing_tabs() {
     let path = write_temp(dir.path(), "tabs.rs", "hello\t\n");
     let violations = check_file(&path, ALL_CHECKS).unwrap();
     assert_eq!(violations.len(), 1);
-    assert!(matches!(violations[0].kind, ViolationKind::TrailingWhitespace));
+    assert!(matches!(
+        violations[0].kind,
+        ViolationKind::TrailingWhitespace
+    ));
     assert_eq!(violations[0].line, 1);
 }
 
@@ -96,10 +118,18 @@ fn check_no_final_newline_multiline() {
 }
 
 #[test]
-fn check_extra_final_newlines() {
+fn check_extra_final_newlines_allowed_by_default() {
     let dir = TempDir::new().unwrap();
     let path = write_temp(dir.path(), "extra.rs", "hello\n\n\n");
     let violations = check_file(&path, ALL_CHECKS).unwrap();
+    assert!(violations.is_empty());
+}
+
+#[test]
+fn check_extra_final_newlines_with_single() {
+    let dir = TempDir::new().unwrap();
+    let path = write_temp(dir.path(), "extra.rs", "hello\n\n\n");
+    let violations = check_file(&path, ALL_CHECKS_SINGLE).unwrap();
     assert_eq!(violations.len(), 1);
     assert!(matches!(
         violations[0].kind,
@@ -122,7 +152,10 @@ fn check_multiple_violations() {
     let path = write_temp(dir.path(), "multi.rs", "hello   ");
     let violations = check_file(&path, ALL_CHECKS).unwrap();
     assert_eq!(violations.len(), 2);
-    assert!(matches!(violations[0].kind, ViolationKind::TrailingWhitespace));
+    assert!(matches!(
+        violations[0].kind,
+        ViolationKind::TrailingWhitespace
+    ));
     assert_eq!(violations[0].line, 1);
     assert!(matches!(violations[1].kind, ViolationKind::NoFinalNewline));
     assert_eq!(violations[1].line, 1);
@@ -136,7 +169,10 @@ fn check_trim_only_ignores_newline_issues() {
     let path = write_temp(dir.path(), "f.rs", "hello   ");
     let violations = check_file(&path, TRIM_ONLY).unwrap();
     assert_eq!(violations.len(), 1);
-    assert!(matches!(violations[0].kind, ViolationKind::TrailingWhitespace));
+    assert!(matches!(
+        violations[0].kind,
+        ViolationKind::TrailingWhitespace
+    ));
 }
 
 #[test]
@@ -167,10 +203,18 @@ fn fix_no_final_newline() {
 }
 
 #[test]
-fn fix_extra_final_newlines() {
+fn fix_extra_final_newlines_preserved_by_default() {
     let dir = TempDir::new().unwrap();
     let path = write_temp(dir.path(), "extra.rs", "hello\n\n\n");
     fix_file(&path, ALL_CHECKS).unwrap();
+    assert_eq!(fs::read_to_string(&path).unwrap(), "hello\n\n\n");
+}
+
+#[test]
+fn fix_extra_final_newlines_with_single() {
+    let dir = TempDir::new().unwrap();
+    let path = write_temp(dir.path(), "extra.rs", "hello\n\n\n");
+    fix_file(&path, ALL_CHECKS_SINGLE).unwrap();
     assert_eq!(fs::read_to_string(&path).unwrap(), "hello\n");
 }
 
@@ -187,6 +231,14 @@ fn fix_all_issues_combined() {
     let dir = TempDir::new().unwrap();
     let path = write_temp(dir.path(), "combo.rs", "  a  \n  b\t\n\n\n");
     fix_file(&path, ALL_CHECKS).unwrap();
+    assert_eq!(fs::read_to_string(&path).unwrap(), "  a\n  b\n\n\n");
+}
+
+#[test]
+fn fix_all_issues_combined_with_single() {
+    let dir = TempDir::new().unwrap();
+    let path = write_temp(dir.path(), "combo.rs", "  a  \n  b\t\n\n\n");
+    fix_file(&path, ALL_CHECKS_SINGLE).unwrap();
     assert_eq!(fs::read_to_string(&path).unwrap(), "  a\n  b\n");
 }
 
@@ -204,6 +256,18 @@ fn fix_then_check_passes() {
     let path = write_temp(dir.path(), "roundtrip.rs", "  a  \n  b\t\n\n\n");
     fix_file(&path, ALL_CHECKS).unwrap();
     let violations = check_file(&path, ALL_CHECKS).unwrap();
+    assert!(
+        violations.is_empty(),
+        "fixed file should have no violations"
+    );
+}
+
+#[test]
+fn fix_then_check_passes_with_single() {
+    let dir = TempDir::new().unwrap();
+    let path = write_temp(dir.path(), "roundtrip.rs", "  a  \n  b\t\n\n\n");
+    fix_file(&path, ALL_CHECKS_SINGLE).unwrap();
+    let violations = check_file(&path, ALL_CHECKS_SINGLE).unwrap();
     assert!(
         violations.is_empty(),
         "fixed file should have no violations"
@@ -233,6 +297,14 @@ fn fix_newline_only_preserves_trailing_whitespace() {
     let dir = TempDir::new().unwrap();
     let path = write_temp(dir.path(), "f.rs", "hello   \n\n\n");
     fix_file(&path, NEWLINE_ONLY).unwrap();
+    assert_eq!(fs::read_to_string(&path).unwrap(), "hello   \n\n\n");
+}
+
+#[test]
+fn fix_newline_only_single_strips_extra() {
+    let dir = TempDir::new().unwrap();
+    let path = write_temp(dir.path(), "f.rs", "hello   \n\n\n");
+    fix_file(&path, NEWLINE_ONLY_SINGLE).unwrap();
     assert_eq!(fs::read_to_string(&path).unwrap(), "hello   \n");
 }
 
@@ -312,6 +384,14 @@ fn fix_whitespace_only_file() {
     let dir = TempDir::new().unwrap();
     let path = write_temp(dir.path(), "ws.rs", "   \n   \n");
     fix_file(&path, ALL_CHECKS).unwrap();
+    assert_eq!(fs::read_to_string(&path).unwrap(), "\n\n");
+}
+
+#[test]
+fn fix_whitespace_only_file_with_single() {
+    let dir = TempDir::new().unwrap();
+    let path = write_temp(dir.path(), "ws.rs", "   \n   \n");
+    fix_file(&path, ALL_CHECKS_SINGLE).unwrap();
     assert_eq!(fs::read_to_string(&path).unwrap(), "");
 }
 
@@ -320,6 +400,14 @@ fn fix_single_newline_file() {
     let dir = TempDir::new().unwrap();
     let path = write_temp(dir.path(), "nl.rs", "\n");
     fix_file(&path, ALL_CHECKS).unwrap();
+    assert_eq!(fs::read_to_string(&path).unwrap(), "");
+}
+
+#[test]
+fn fix_single_newline_file_with_single() {
+    let dir = TempDir::new().unwrap();
+    let path = write_temp(dir.path(), "nl.rs", "\n");
+    fix_file(&path, ALL_CHECKS_SINGLE).unwrap();
     assert_eq!(fs::read_to_string(&path).unwrap(), "");
 }
 
@@ -338,5 +426,14 @@ fn fix_newline_only_then_check_passes() {
     let path = write_temp(dir.path(), "f.rs", "hello\n\n\n");
     fix_file(&path, NEWLINE_ONLY).unwrap();
     let violations = check_file(&path, NEWLINE_ONLY).unwrap();
+    assert!(violations.is_empty());
+}
+
+#[test]
+fn fix_newline_only_single_then_check_passes() {
+    let dir = TempDir::new().unwrap();
+    let path = write_temp(dir.path(), "f.rs", "hello\n\n\n");
+    fix_file(&path, NEWLINE_ONLY_SINGLE).unwrap();
+    let violations = check_file(&path, NEWLINE_ONLY_SINGLE).unwrap();
     assert!(violations.is_empty());
 }
