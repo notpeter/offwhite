@@ -89,11 +89,13 @@ If you don't wish to process directories either edit your `.editorconfig` or
 specify individual paths `offwhite src/` or extensions `offwhite '**/*.{toml,md,rs}`
 
 > [!NOTE]
-> - Quoted globs: `offwhite '*.md'` will be handled by `offwhite`
 > - Unquoted globs: `offwhite *.md` will be expanded by your shell and passed a list of files to `offwhite` as arguments.
 > There is a size limit to these arguments (`getconf ARG_MAX`), typically 1 or 2 MB, but sometimes smaller.
+> - Quoted globs: `offwhite '*.md'` will be handled by `offwhite` and expanded as `.editorconfig` globs.
+> Editconfig matches `*.md` recursively, so in practice `*.md` is like `**/*.md` in the shell.
+> To match files non-recursively, use `[/*.md]` in your `.editorconfig`.
 > - Globs in [src/ignores.rs](src/ignores.rs) are case insensitive.
->  - All other non-shell globs ([`.editorconfig` wildcards](https://editorconfig.org/#wildcards), etc)
+> - All other non-shell globs ([`.editorconfig` wildcards](https://editorconfig.org/#wildcards), etc)
 >  are case-sensitive and support complex globbing syntax like
 > `[**/tests/{output/*,*.out.txt}]`,  `[*.[Pp][Yy]]`
 
@@ -106,3 +108,8 @@ This project depends on the following crates:
 | [ec4rs](https://crates.io/crates/ec4rs)   | [TheDaemoness/ec4rs](https://github.com/TheDaemoness/ec4rs)                           | Editorconfig parser |
 | [grep](https://crates.io/crates/grep)     | [BurntSushi/ripgrep](https://github.com/BurntSushi/ripgrep/tree/master/crates/grep)   | Grep Engine         |
 | [ignore](https://crates.io/crates/ignore) | [BurntSushi/ripgrep](https://github.com/BurntSushi/ripgrep/tree/master/crates/ignore) | Gitignore parser    |
+
+## License
+
+Copyright (c) Peter Tripp
+Available under the [MIT License](LICENSE).
