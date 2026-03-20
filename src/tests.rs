@@ -70,7 +70,6 @@ fn write_temp(dir: &Path, name: &str, contents: &str) -> std::path::PathBuf {
 fn read_temp(path: &Path) -> String {
     fs::read_to_string(path).unwrap()
 }
-
 #[test]
 fn normalize_cli_pattern_strips_leading_dot_slash() {
     assert_eq!(normalize_cli_pattern("./*.md"), "*.md");
@@ -126,7 +125,6 @@ fn resolve_paths_directory_argument_respects_ignore_files() {
     assert!(files.contains(&kept));
     assert!(!files.contains(&ignored));
 }
-
 // --- check_file tests ---
 
 #[test]

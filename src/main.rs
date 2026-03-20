@@ -235,7 +235,6 @@ pub(crate) fn display_violations(
 
     displayed
 }
-
 fn main() -> ExitCode {
     let cli = parse_cli();
     let action = cli.action();

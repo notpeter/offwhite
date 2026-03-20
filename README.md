@@ -132,13 +132,14 @@ To exclude/ignore certain files/directories you have a few options:
 
 ### No --include or --exclude
 
+Or add the files/directories to a `.ignore` file.
+
 Q: Why don't you include a runtime option to `--exclude` or `--include` globs?
 A: The goal of the project is to support automated enforcement of the same rules used by
 editors that support the `editorconfig` standard editing files within a git repo,
 with no any additional configuration.
 If you don't wish to process directories (a) edit your `.editorconfig` (b) add `.ignore`
 files or (c) specify paths/globs `offwhite 'src/*.{toml,md,rs}` at runtime.
-
 ### Glob notes
 
 > [!NOTE]
