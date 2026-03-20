@@ -12,14 +12,15 @@ use ignore::WalkBuilder;
 
 fn walk_dir(
     dir: &Path,
-    respect_gitignore: bool,
+    respect_ignore_files: bool,
     include_glob: Option<&str>,
     out: &mut Vec<PathBuf>,
 ) {
     let walker = WalkBuilder::new(dir)
-        .git_ignore(respect_gitignore)
-        .git_global(respect_gitignore)
-        .git_exclude(respect_gitignore)
+        .ignore(respect_ignore_files)
+        .git_ignore(respect_ignore_files)
+        .git_global(respect_ignore_files)
+        .git_exclude(respect_ignore_files)
         .hidden(false)
         .overrides(build_ignore_overrides(dir, include_glob))
         .build();
@@ -43,19 +44,19 @@ pub(crate) fn normalize_cli_pattern(s: &str) -> &str {
     s.strip_prefix("./").unwrap_or(s)
 }
 
-pub(crate) fn resolve_paths(patterns: &[String], respect_gitignore: bool) -> Vec<PathBuf> {
+pub(crate) fn resolve_paths(patterns: &[String], respect_ignore_files: bool) -> Vec<PathBuf> {
     let mut files = Vec::new();
 
     for pattern in patterns {
         let pattern = normalize_cli_pattern(pattern);
         if contains_glob_meta(pattern) {
-            walk_dir(Path::new("."), respect_gitignore, Some(pattern), &mut files);
+            walk_dir(Path::new("."), respect_ignore_files, Some(pattern), &mut files);
         } else {
             let path = PathBuf::from(pattern);
             if path.is_file() {
                 files.push(path);
             } else if path.is_dir() {
-                walk_dir(&path, respect_gitignore, None, &mut files);
+                walk_dir(&path, respect_ignore_files, None, &mut files);
             } else {
                 eprintln!("{}: no such file or directory", path.display());
             }
