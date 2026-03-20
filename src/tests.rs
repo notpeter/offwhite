@@ -2,7 +2,10 @@ use std::fs;
 use std::path::Path;
 use tempfile::TempDir;
 
-use crate::{check_file, configs::FilePolicy, fix_file, violation::ViolationKind};
+use crate::{
+    action::normalize_cli_pattern, check_file, configs::FilePolicy, fix_file,
+    violation::ViolationKind,
+};
 
 const ALL_CHECKS: FilePolicy = FilePolicy {
     trim_trailing_whitespace: true,
@@ -44,6 +47,18 @@ fn write_temp(dir: &Path, name: &str, contents: &str) -> std::path::PathBuf {
     let path = dir.join(name);
     fs::write(&path, contents).unwrap();
     path
+}
+
+#[test]
+fn normalize_cli_pattern_strips_leading_dot_slash() {
+    assert_eq!(normalize_cli_pattern("./*.md"), "*.md");
+    assert_eq!(normalize_cli_pattern("./src"), "src");
+}
+
+#[test]
+fn normalize_cli_pattern_leaves_other_inputs_unchanged() {
+    assert_eq!(normalize_cli_pattern("*.md"), "*.md");
+    assert_eq!(normalize_cli_pattern("../*.md"), "../*.md");
 }
 
 // --- check_file tests ---

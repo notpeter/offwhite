@@ -39,10 +39,15 @@ pub(crate) fn contains_glob_meta(s: &str) -> bool {
     s.contains('*') || s.contains('?') || s.contains('[') || s.contains('{')
 }
 
+pub(crate) fn normalize_cli_pattern(s: &str) -> &str {
+    s.strip_prefix("./").unwrap_or(s)
+}
+
 pub(crate) fn resolve_paths(patterns: &[String], respect_gitignore: bool) -> Vec<PathBuf> {
     let mut files = Vec::new();
 
     for pattern in patterns {
+        let pattern = normalize_cli_pattern(pattern);
         if contains_glob_meta(pattern) {
             walk_dir(Path::new("."), respect_gitignore, Some(pattern), &mut files);
         } else {
