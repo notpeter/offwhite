@@ -13,6 +13,7 @@ use std::process::ExitCode;
 use crate::action::{check_file, fix_file, resolve_paths};
 use crate::configs::{discover_editorconfigs, file_policy};
 use crate::inits::{init_editorconfig, init_ignore_revs};
+use crate::violation::{Violation, ViolationKind};
 
 use clap::{Args, Parser, Subcommand};
 
@@ -210,6 +211,31 @@ where
     }
 }
 
+pub(crate) fn display_violations(
+    violations: Vec<Violation>,
+    verbosity: Verbosity,
+) -> Vec<Violation> {
+    if verbosity >= Verbosity::Verbose {
+        return violations;
+    }
+
+    let mut displayed = Vec::with_capacity(violations.len());
+    let mut saw_line_ending_mismatch = false;
+
+    for violation in violations {
+        match violation.kind {
+            ViolationKind::IncorrectLineEnding { .. } if saw_line_ending_mismatch => {}
+            ViolationKind::IncorrectLineEnding { .. } => {
+                saw_line_ending_mismatch = true;
+                displayed.push(violation);
+            }
+            _ => displayed.push(violation),
+        }
+    }
+
+    displayed
+}
+
 fn main() -> ExitCode {
     let cli = parse_cli();
     let action = cli.action();
@@ -259,7 +285,10 @@ fn main() -> ExitCode {
     for path in &files {
         let mut policy = file_policy(path);
         policy.single_final_newline = cli.options.single_final_newline;
-        if !policy.trim_trailing_whitespace && !policy.insert_final_newline {
+        if !policy.trim_trailing_whitespace
+            && !policy.insert_final_newline
+            && policy.end_of_line.is_none()
+        {
             continue;
         }
 
@@ -272,7 +301,8 @@ fn main() -> ExitCode {
             }
             Action::Check => match check_file(path, policy) {
                 Ok(violations) => {
-                    for v in &violations {
+                    let displayed = display_violations(violations.clone(), verbosity);
+                    for v in &displayed {
                         println!("{v}");
                     }
                     if !violations.is_empty() {

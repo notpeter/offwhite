@@ -3,12 +3,30 @@ use std::{
     path::{Path, PathBuf},
 };
 
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum LineEnding {
+    Lf,
+    CrLf,
+    Cr,
+}
+
+impl LineEnding {
+    pub fn as_str(self) -> &'static str {
+        match self {
+            Self::Lf => "lf",
+            Self::CrLf => "crlf",
+            Self::Cr => "cr",
+        }
+    }
+}
+
 /// What to check/fix for a given file, derived from .editorconfig.
 #[derive(Clone, Copy)]
 pub struct FilePolicy {
     pub trim_trailing_whitespace: bool,
     pub insert_final_newline: bool,
     pub single_final_newline: bool,
+    pub end_of_line: Option<LineEnding>,
 }
 
 /// Look up .editorconfig properties for a file path.
@@ -24,6 +42,12 @@ pub fn file_policy(path: &Path) -> FilePolicy {
             Ok(ec4rs::property::FinalNewline::Value(true))
         ),
         single_final_newline: false,
+        end_of_line: match props.get::<ec4rs::property::EndOfLine>() {
+            Ok(ec4rs::property::EndOfLine::Lf) => Some(LineEnding::Lf),
+            Ok(ec4rs::property::EndOfLine::CrLf) => Some(LineEnding::CrLf),
+            Ok(ec4rs::property::EndOfLine::Cr) => Some(LineEnding::Cr),
+            _ => None,
+        },
     }
 }
 
