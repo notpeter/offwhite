@@ -14,7 +14,7 @@ use crate::action::{check_file, fix_file, resolve_paths};
 use crate::configs::{discover_editorconfigs, file_policy};
 use crate::inits::{init_editorconfig, init_ignore_revs};
 
-use clap::Parser;
+use clap::{Args, Parser, Subcommand};
 
 #[derive(Clone, Copy, PartialEq, Eq, PartialOrd, Ord)]
 pub enum Verbosity {
@@ -23,7 +23,7 @@ pub enum Verbosity {
     Verbose,
 }
 
-#[derive(Clone, Copy, Default, PartialEq, Eq)]
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
 pub(crate) enum Action {
     Init,
     InitIgnoreRevs,
@@ -32,67 +32,117 @@ pub(crate) enum Action {
     Fix,
 }
 
+impl Action {
+    fn as_str(self) -> &'static str {
+        match self {
+            Self::Init => "init",
+            Self::InitIgnoreRevs => "init-ignore-revs",
+            Self::Check => "check",
+            Self::Fix => "fix",
+        }
+    }
+}
+
 #[derive(Parser)]
 #[command(
     name = "offwhite",
-    about = "Check and fix trailing whitespace and final newlines",
-    after_help = "Offwhite enforces trim_trailing_whitespace and insert_final_newline as specified in .editorconfig.",
-    group = clap::ArgGroup::new("action")
-        .args(["init", "init_ignore_revs", "check", "fix"]),
+    about = "Offwhite enforces .editconfig whitespace and newline settings",
+    override_usage = "offwhite check [OPTIONS] [PATHS]...\n       offwhite fix [OPTIONS] [PATHS]...\n       offwhite init\n       offwhite init-ignore-revs",
+    help_template = "{about-section}\nUsage:\n  offwhite check [OPTIONS] [PATHS]...       Check for violations\n  offwhite fix [OPTIONS] [PATHS]...         Fix files in place\n  offwhite init                             Create an example .editorconfig\n  offwhite init-ignore-revs                 Create an example .git-blame-ignore-revs\n\nOptions:\n  -q, --quiet                 Suppress warnings\n  -v, --verbose               Increase logging output\n      --single-final-newline  Enforce exactly one trailing newline (disabled by default)\n      --no-ignore             Do not respect .ignore or git ignore files\n  -h, --help                  Print help\n\n",
+    disable_help_subcommand = true
 )]
 pub(crate) struct Cli {
-    /// Create a default .editorconfig in the current directory
-    #[arg(long)]
-    init: bool,
+    #[command(flatten)]
+    options: Options,
 
-    /// Create a default .git-blame-ignore-revs in the current directory
-    #[arg(long = "init-ignore-revs")]
-    init_ignore_revs: bool,
+    #[command(subcommand)]
+    command: Option<Command>,
+}
 
-    /// Check for violations (default)
-    #[arg(long)]
-    check: bool,
-
-    /// Fix files in place
-    #[arg(long)]
-    fix: bool,
-
+#[derive(Args)]
+struct Options {
     /// Suppress warnings
-    #[arg(short, long, conflicts_with = "verbose")]
+    #[arg(short, long, conflicts_with = "verbose", global = true)]
     quiet: bool,
 
     /// Increase logging output
-    #[arg(short, long, conflicts_with = "quiet")]
+    #[arg(short, long, conflicts_with = "quiet", global = true)]
     verbose: bool,
 
-    /// Enforce exactly one trailing newline (by default, one or more is accepted)
-    #[arg(long = "single-final-newline")]
+    /// Enforce exactly one trailing newline (disabled by default)
+    #[arg(long = "single-final-newline", global = true)]
     single_final_newline: bool,
 
-    /// Do not respect .gitignore files (respected by default)
-    #[arg(long = "no-gitignore")]
-    no_gitignore: bool,
+    /// Do not respect .ignore or git ignore files
+    #[arg(short = 'u', long = "no-ignore", global = true)]
+    no_ignore: bool,
+}
 
+#[derive(Subcommand)]
+enum Command {
+    /// Create an example .editorconfig
+    Init,
+
+    /// Create a example .git-blame-ignore-revs
+    #[command(name = "init-ignore-revs")]
+    InitIgnoreRevs,
+
+    /// Check for violations
+    Check(CheckArgs),
+
+    /// Fix files in place
+    Fix(FixArgs),
+}
+
+#[derive(Args)]
+struct PathsArgs {
     /// Files or directories to process (supports quoted glob patterns)
     #[arg(default_value = ".")]
     paths: Vec<String>,
 }
 
+#[derive(Args)]
+#[command(
+    about = "Check for violations",
+    help_template = "{about-section}\nUsage: offwhite check [OPTIONS] [PATHS]...\n\nArguments:\n  [PATHS]...  Files or directories to process (supports quoted glob patterns) [default: .]\n\nOptions:\n  -q, --quiet                 Suppress warnings\n  -v, --verbose               Increase logging output\n      --single-final-newline  Enforce exactly one trailing newline (disabled by default)\n      --no-ignore             Do not respect .ignore or git ignore files\n  -h, --help                  Print help\n"
+)]
+struct CheckArgs {
+    #[command(flatten)]
+    paths: PathsArgs,
+}
+
+#[derive(Args)]
+#[command(
+    about = "Fix files in place",
+    help_template = "{about-section}\nUsage: offwhite fix [OPTIONS] [PATHS]...\n\nArguments:\n  [PATHS]...  Files or directories to process (supports quoted glob patterns) [default: .]\n\nOptions:\n  -q, --quiet                 Suppress warnings\n  -v, --verbose               Increase logging output\n      --single-final-newline  Enforce exactly one trailing newline (disabled by default)\n      --no-ignore             Do not respect .ignore or git ignore files\n  -h, --help                  Print help\n"
+)]
+struct FixArgs {
+    #[command(flatten)]
+    paths: PathsArgs,
+}
+
 impl Cli {
     fn action(&self) -> Action {
-        if self.init {
-            Action::Init
-        } else if self.init_ignore_revs {
-            Action::InitIgnoreRevs
-        } else if self.fix {
-            Action::Fix
-        } else {
-            Action::Check
+        match self.command {
+            Some(Command::Check(_)) => Action::Check,
+            Some(Command::Fix(_)) => Action::Fix,
+            Some(Command::Init) => Action::Init,
+            Some(Command::InitIgnoreRevs) => Action::InitIgnoreRevs,
+            None => Action::Check,
+        }
+    }
+
+    fn paths(&self) -> &[String] {
+        match &self.command {
+            Some(Command::Check(args)) => &args.paths.paths,
+            Some(Command::Fix(args)) => &args.paths.paths,
+            Some(Command::Init) | Some(Command::InitIgnoreRevs) => &[],
+            None => unreachable!("default check command should be normalized before parsing"),
         }
     }
 
     fn verbosity(&self) -> Verbosity {
-        match (self.quiet, self.verbose) {
+        match (self.options.quiet, self.options.verbose) {
             (true, _) => Verbosity::Quiet,
             (_, true) => Verbosity::Verbose,
             _ => Verbosity::Normal,
@@ -100,8 +150,68 @@ impl Cli {
     }
 }
 
+fn parse_cli() -> Cli {
+    Cli::parse_from(normalize_args(std::env::args_os()))
+}
+
+fn normalize_args<I>(args: I) -> Vec<std::ffi::OsString>
+where
+    I: IntoIterator<Item = std::ffi::OsString>,
+{
+    let args: Vec<_> = args.into_iter().collect();
+    if args.len() <= 1 {
+        return vec![args[0].clone(), Action::Check.as_str().into()];
+    }
+
+    if args
+        .iter()
+        .skip(1)
+        .any(|arg| matches!(arg.to_str(), Some("-h" | "--help")))
+    {
+        return args;
+    }
+
+    let action_names = [
+        Action::Init,
+        Action::InitIgnoreRevs,
+        Action::Check,
+        Action::Fix,
+    ]
+    .into_iter()
+    .map(|action| action.as_str())
+    .collect::<Vec<_>>();
+
+    let first_positional = args
+        .iter()
+        .enumerate()
+        .skip(1)
+        .find(|(_, arg)| *arg == "--" || !arg.to_string_lossy().starts_with('-'))
+        .map(|(idx, arg)| (idx, arg.to_string_lossy().into_owned()));
+
+    match first_positional {
+        Some((_, value)) if action_names.iter().any(|name| name == &value) => args,
+        Some((idx, value)) if value == "--" => {
+            let mut normalized = args[..idx].to_vec();
+            normalized.push(Action::Check.as_str().into());
+            normalized.extend_from_slice(&args[idx..]);
+            normalized
+        }
+        Some((idx, _)) => {
+            let mut normalized = args[..idx].to_vec();
+            normalized.push(Action::Check.as_str().into());
+            normalized.extend_from_slice(&args[idx..]);
+            normalized
+        }
+        None => {
+            let mut normalized = args;
+            normalized.push(Action::Check.as_str().into());
+            normalized
+        }
+    }
+}
+
 fn main() -> ExitCode {
-    let cli = Cli::parse();
+    let cli = parse_cli();
     let action = cli.action();
 
     match action {
@@ -135,7 +245,7 @@ fn main() -> ExitCode {
         return ExitCode::FAILURE;
     }
 
-    let files = resolve_paths(&cli.paths, !cli.no_gitignore);
+    let files = resolve_paths(cli.paths(), !cli.options.no_ignore);
 
     if files.is_empty() {
         if verbosity >= Verbosity::Normal {
@@ -148,7 +258,7 @@ fn main() -> ExitCode {
 
     for path in &files {
         let mut policy = file_policy(path);
-        policy.single_final_newline = cli.single_final_newline;
+        policy.single_final_newline = cli.options.single_final_newline;
         if !policy.trim_trailing_whitespace && !policy.insert_final_newline {
             continue;
         }
