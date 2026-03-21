@@ -177,7 +177,16 @@ files or (c) pass explicit files or directories at runtime.
 >   and support complex globbing syntax like `[**/tests/{output/*,*.out.txt}]`, `[*.[Pp][Yy]]`
 > - To match files non-recursively, use a leading slash in the `.editorconfig` section like `[/*.md]`
 
-## Intentional non-support
+## Limitations
+
+### Character Encoding Limtations
+
+Only UTF-8 files are processed. Files with invalid UTF-8 is skipped.
+Other character encodings are unsupported. (latin1 / ISO 8859-1, Windows-1252, utf-8, utf-8-bom, utf-16be, utf-16le, etc)
+
+Unix filenames may be arbitrary bytes, but only UTF-8 filenames are supported.
+
+### Editorconfig Limitations
 
 Offwhite supports enforcing the following EditorConfig directives on UTF-8 files:
 
