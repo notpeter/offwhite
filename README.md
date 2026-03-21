@@ -39,26 +39,39 @@ Options:
 offwhite reads `.editorconfig` files to decide which files to check and the rules to enforce.
 Multiple `.editorconfig` files in nested directories are supported.
 
-Offwhite only enforces the following properties:
+Offwhite enforces compliance with the follow `.editorconfig` keys (if set):
 
 | Property                          | Effect                                       |
 | --------------------------------- | -------------------------------------------- |
+| `charset = utf-8`                 | Required in root `[*]` section               |
 | `end_of_line = lf`                | Check/fix line endings (`lf` or `crlf`)      |
 | `trim_trailing_whitespace = true` | Check/fix trailing whitespace on lines       |
 | `insert_final_newline = true`     | Check/fix missing or extra trailing newlines |
 
 ## Initialization
 
-`offwhite` needs an `.editconfig` to operate.
-Use `offwhite init` to create one in the current directory:
+To operate, `offwhite` requires a root `.editconfig` which asserts `utf-8` is the default encoding:
 
 ```editorconfig
 root = true
 [*]
+charset = utf-8
+```
+
+Use `offwhite init` to create an example `.editorconfig` in the current directory:
+
+```editorconfig
+root = true
+[*]
+charset = utf-8
 end_of_line = lf
 trim_trailing_whitespace = true
 insert_final_newline = true
 ```
+
+`offwhite` only operates when `.editorconfig` policy in effect for a given path contains `charset = utf-8`.
+Sections with alternative charset policies are skipped; in verbose mode, `offwhite` warns when this happens.
+Files that are not valid UTF-8 are skipped with a warning.
 
 ## Ignore / Exclusions
 
@@ -108,11 +121,13 @@ To exclude/ignore certain files/directories you have a few options:
    ```editorconfig
    root = true
    [*]
+   charset = utf-8
    end_of_line = lf
    trim_trailing_whitespace = true
    insert_final_newline = true
 
    [/vendor/windos_project/*.c]
+   charset = latin1
    end_of_line = crlf
    trim_trailing_whitespace = unset
    insert_final_newline = unset

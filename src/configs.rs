@@ -24,7 +24,7 @@ impl LineEnding {
 }
 
 /// What to check/fix for a given file, derived from .editorconfig.
-#[derive(Clone, Copy)]
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub struct FilePolicy {
     pub trim_trailing_whitespace: bool,
     pub insert_final_newline: bool,
@@ -33,19 +33,46 @@ pub struct FilePolicy {
 }
 
 #[derive(Clone)]
+struct ParsedSection {
+    section: Section<Glob>,
+    charset: SectionCharset,
+}
+
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+enum SectionCharset {
+    Unset,
+    Utf8,
+    Other,
+}
+
+#[derive(Clone)]
 struct ParsedEditorConfig {
     is_root: bool,
-    sections: Vec<Section<Glob>>,
+    has_utf8_root_section: bool,
+    sections: Vec<ParsedSection>,
 }
 
 type CachedParsedConfig = Result<Option<Rc<ParsedEditorConfig>>, ()>;
 type CachedConfigStack = Result<Rc<[PathBuf]>, ()>;
 
+#[derive(Clone, Copy, Default)]
+pub struct PolicyDecision {
+    pub policy: FilePolicy,
+    pub skipped_non_utf8_sections: bool,
+}
+
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum RootConfigStatus {
+    Missing,
+    MissingUtf8,
+    Ready,
+}
+
 pub struct PolicyCache {
     cwd: PathBuf,
     parsed_configs: HashMap<PathBuf, CachedParsedConfig>,
     directory_configs: HashMap<PathBuf, CachedConfigStack>,
-    policies: HashMap<PathBuf, FilePolicy>,
+    policies: HashMap<PathBuf, PolicyDecision>,
 }
 
 impl PolicyCache {
@@ -58,32 +85,51 @@ impl PolicyCache {
         }
     }
 
-    pub fn file_policy(&mut self, path: &Path) -> FilePolicy {
+    pub fn file_policy(&mut self, path: &Path) -> PolicyDecision {
         let normalized = self.normalize_target_path(path);
         if let Some(policy) = self.policies.get(&normalized) {
             return *policy;
         }
 
-        let policy = self
-            .properties_for(&normalized)
-            .map(|props| policy_from_properties(&props))
-            .unwrap_or_default();
-        self.policies.insert(normalized, policy);
-        policy
+        let decision = self.properties_for(&normalized).map_or_else(
+            || PolicyDecision::default(),
+            |(props, skipped_non_utf8_sections)| PolicyDecision {
+                policy: policy_from_properties(&props),
+                skipped_non_utf8_sections,
+            },
+        );
+        self.policies.insert(normalized, decision);
+        decision
     }
 
-    pub fn has_editorconfigs(&mut self, start: &Path) -> bool {
+    pub fn root_config_status(&mut self, start: &Path) -> RootConfigStatus {
         let normalized = self.normalize_target_path(start);
         let dir = if normalized.is_dir() {
             normalized
         } else if let Some(parent) = normalized.parent() {
             parent.to_path_buf()
         } else {
-            return false;
+            return RootConfigStatus::Missing;
         };
 
-        self.config_stack_for_dir(&dir)
-            .is_ok_and(|stack| !stack.is_empty())
+        let Ok(stack) = self.config_stack_for_dir(&dir) else {
+            return RootConfigStatus::Missing;
+        };
+
+        for config_path in stack.iter() {
+            let Ok(Some(parsed)) = self.parsed_config(config_path) else {
+                continue;
+            };
+            if parsed.is_root {
+                return if parsed.has_utf8_root_section {
+                    RootConfigStatus::Ready
+                } else {
+                    RootConfigStatus::MissingUtf8
+                };
+            }
+        }
+
+        RootConfigStatus::Missing
     }
 
     fn normalize_target_path(&self, path: &Path) -> PathBuf {
@@ -94,20 +140,28 @@ impl PolicyCache {
         }
     }
 
-    fn properties_for(&mut self, path: &Path) -> Option<Properties> {
+    fn properties_for(&mut self, path: &Path) -> Option<(Properties, bool)> {
         let mut props = Properties::new();
+        let mut skipped_non_utf8_sections = false;
         let dir = if path.is_dir() { path } else { path.parent()? };
 
         for config_path in self.config_stack_for_dir(dir).ok()?.iter() {
             let parsed = self.parsed_config(config_path).ok()??;
             let base = config_path.parent().unwrap_or(Path::new(""));
             let relative = path.strip_prefix(base).unwrap_or(path);
-            for section in &parsed.sections {
-                let _ = section.apply_to(&mut props, relative);
+            for parsed_section in &parsed.sections {
+                if !parsed_section.section.applies_to(relative) {
+                    continue;
+                }
+                if parsed_section.charset == SectionCharset::Other {
+                    skipped_non_utf8_sections = true;
+                    continue;
+                }
+                let _ = parsed_section.section.apply_to(&mut props, relative);
             }
         }
 
-        Some(props)
+        Some((props, skipped_non_utf8_sections))
     }
 
     fn config_stack_for_dir(&mut self, dir: &Path) -> CachedConfigStack {
@@ -148,13 +202,27 @@ impl PolicyCache {
                 Ok(mut file) => {
                     let is_root = file.reader.is_root;
                     let mut sections = Vec::new();
+                    let mut has_utf8_root_section = false;
                     for section in &mut file {
                         match section {
-                            Ok(section) => sections.push(section),
+                            Ok(section) => {
+                                let parsed_section = ParsedSection {
+                                    charset: section_charset(&section),
+                                    section,
+                                };
+                                has_utf8_root_section |= parsed_section.charset
+                                    == SectionCharset::Utf8
+                                    && is_global_section(&parsed_section.section);
+                                sections.push(parsed_section);
+                            }
                             Err(_) => return self.cache_parsed_config(path, Err(())),
                         }
                     }
-                    Ok(Some(Rc::new(ParsedEditorConfig { is_root, sections })))
+                    Ok(Some(Rc::new(ParsedEditorConfig {
+                        is_root,
+                        has_utf8_root_section,
+                        sections,
+                    })))
                 }
                 Err(_) => Err(()),
             }
@@ -203,4 +271,19 @@ fn policy_from_properties(props: &Properties) -> FilePolicy {
             _ => None,
         },
     }
+}
+
+fn section_charset(section: &Section<Glob>) -> SectionCharset {
+    match section.props().get::<ec4rs::property::Charset>() {
+        Ok(ec4rs::property::Charset::Utf8) => SectionCharset::Utf8,
+        Ok(_) => SectionCharset::Other,
+        Err(_) => SectionCharset::Unset,
+    }
+}
+
+fn is_global_section(section: &Section<Glob>) -> bool {
+    section
+        .pattern()
+        .as_ref()
+        .is_ok_and(|pattern| pattern == &Glob::new("*"))
 }

@@ -3,8 +3,8 @@ use std::path::Path;
 use tempfile::TempDir;
 
 use crate::{
-    action::{check_file_with, walk_paths},
-    configs::{FilePolicy, LineEnding, PolicyCache},
+    action::{FileStatus, check_file_with, walk_paths},
+    configs::{FilePolicy, LineEnding, PolicyCache, RootConfigStatus},
     fix_file,
     violation::ViolationKind,
 };
@@ -79,7 +79,8 @@ fn check_file(
     policy: FilePolicy,
 ) -> Result<Vec<crate::violation::Violation>, Box<dyn std::error::Error>> {
     let mut violations = Vec::new();
-    check_file_with(path, policy, |violation| violations.push(violation))?;
+    let status = check_file_with(path, policy, |violation| violations.push(violation))?;
+    assert_eq!(status, FileStatus::Processed);
     Ok(violations)
 }
 
@@ -165,6 +166,19 @@ fn check_file_with_streams_violations_in_order() {
     assert_eq!(seen.len(), 2);
     assert!(matches!(seen[0], (1, ViolationKind::TrailingWhitespace)));
     assert!(matches!(seen[1], (2, ViolationKind::NoFinalNewline)));
+}
+
+#[test]
+fn check_file_with_invalid_utf8_returns_warning_status() {
+    let dir = TempDir::new().unwrap();
+    let path = dir.path().join("invalid.txt");
+    fs::write(&path, [0x66, 0x6f, 0x80, 0x0a]).unwrap();
+    let mut seen = Vec::new();
+
+    let status = check_file_with(&path, ALL_CHECKS, |violation| seen.push(violation)).unwrap();
+
+    assert_eq!(status, FileStatus::InvalidUtf8);
+    assert!(seen.is_empty());
 }
 
 #[test]
@@ -429,6 +443,19 @@ fn fix_clean_readonly_file_skips_write() {
     assert_eq!(fs::read_to_string(&path).unwrap(), "hello\nworld\n");
 }
 
+#[test]
+fn fix_invalid_utf8_returns_warning_status() {
+    let dir = TempDir::new().unwrap();
+    let path = dir.path().join("invalid.txt");
+    let bytes = [0x66, 0x6f, 0x80, 0x0a];
+    fs::write(&path, bytes).unwrap();
+
+    let status = fix_file(&path, ALL_CHECKS).unwrap();
+
+    assert_eq!(status, FileStatus::InvalidUtf8);
+    assert_eq!(fs::read(&path).unwrap(), bytes);
+}
+
 // --- policy-selective fix tests ---
 
 #[test]
@@ -498,21 +525,21 @@ fn fix_without_end_of_line_preserves_existing_crlf() {
 #[test]
 fn file_policy_reads_editorconfig() {
     let dir = TempDir::new().unwrap();
-    let ec = "root = true\n\n[*]\ntrim_trailing_whitespace = true\ninsert_final_newline = true\nend_of_line = crlf\n";
+    let ec = "root = true\n\n[*]\ncharset = utf-8\ntrim_trailing_whitespace = true\ninsert_final_newline = true\nend_of_line = crlf\n";
     write_temp(dir.path(), ".editorconfig", ec);
     let path = write_temp(dir.path(), "test.rs", "hello   ");
 
     let mut cache = PolicyCache::new();
     let policy = cache.file_policy(&path);
-    assert!(policy.trim_trailing_whitespace);
-    assert!(policy.insert_final_newline);
-    assert_eq!(policy.end_of_line, Some(LineEnding::CrLf));
+    assert!(policy.policy.trim_trailing_whitespace);
+    assert!(policy.policy.insert_final_newline);
+    assert_eq!(policy.policy.end_of_line, Some(LineEnding::CrLf));
 }
 
 #[test]
 fn file_policy_respects_glob_sections() {
     let dir = TempDir::new().unwrap();
-    let ec = "root = true\n\n[*.rs]\ntrim_trailing_whitespace = true\n\n[*.md]\ninsert_final_newline = true\n";
+    let ec = "root = true\n\n[*]\ncharset = utf-8\n\n[*.rs]\ntrim_trailing_whitespace = true\n\n[*.md]\ninsert_final_newline = true\n";
     write_temp(dir.path(), ".editorconfig", ec);
 
     let rs_path = write_temp(dir.path(), "test.rs", "");
@@ -522,32 +549,77 @@ fn file_policy_respects_glob_sections() {
     let mut cache = PolicyCache::new();
 
     let rs_policy = cache.file_policy(&rs_path);
-    assert!(rs_policy.trim_trailing_whitespace);
-    assert!(!rs_policy.insert_final_newline);
+    assert!(rs_policy.policy.trim_trailing_whitespace);
+    assert!(!rs_policy.policy.insert_final_newline);
 
     let md_policy = cache.file_policy(&md_path);
-    assert!(!md_policy.trim_trailing_whitespace);
-    assert!(md_policy.insert_final_newline);
+    assert!(!md_policy.policy.trim_trailing_whitespace);
+    assert!(md_policy.policy.insert_final_newline);
 
     let txt_policy = cache.file_policy(&txt_path);
-    assert!(!txt_policy.trim_trailing_whitespace);
-    assert!(!txt_policy.insert_final_newline);
-    assert_eq!(txt_policy.end_of_line, None);
+    assert!(!txt_policy.policy.trim_trailing_whitespace);
+    assert!(!txt_policy.policy.insert_final_newline);
+    assert_eq!(txt_policy.policy.end_of_line, None);
 }
 
 #[test]
 fn file_policy_defaults_to_off() {
     let dir = TempDir::new().unwrap();
-    // .editorconfig with root=true but no matching properties
-    let ec = "root = true\n";
+    // .editorconfig with root=true and utf-8, but no matching policy properties
+    let ec = "root = true\n\n[*]\ncharset = utf-8\n";
     write_temp(dir.path(), ".editorconfig", ec);
     let path = write_temp(dir.path(), "test.rs", "hello   ");
 
     let mut cache = PolicyCache::new();
     let policy = cache.file_policy(&path);
-    assert!(!policy.trim_trailing_whitespace);
-    assert!(!policy.insert_final_newline);
-    assert_eq!(policy.end_of_line, None);
+    assert!(!policy.policy.trim_trailing_whitespace);
+    assert!(!policy.policy.insert_final_newline);
+    assert_eq!(policy.policy.end_of_line, None);
+}
+
+#[test]
+fn file_policy_skips_non_utf8_sections() {
+    let dir = TempDir::new().unwrap();
+    let ec = "root = true\n\n[*]\ncharset = utf-8\ntrim_trailing_whitespace = true\n\n[*.bin]\ncharset = latin1\ninsert_final_newline = true\n";
+    write_temp(dir.path(), ".editorconfig", ec);
+    let path = write_temp(dir.path(), "test.bin", "hello   ");
+
+    let mut cache = PolicyCache::new();
+    let policy = cache.file_policy(&path);
+
+    assert!(policy.policy.trim_trailing_whitespace);
+    assert!(!policy.policy.insert_final_newline);
+    assert!(policy.skipped_non_utf8_sections);
+}
+
+#[test]
+fn root_config_status_requires_root_utf8_section() {
+    let dir = TempDir::new().unwrap();
+    write_temp(
+        dir.path(),
+        ".editorconfig",
+        "root = true\n\n[*.rs]\ncharset = utf-8\n",
+    );
+
+    let mut cache = PolicyCache::new();
+    let status = cache.root_config_status(dir.path());
+
+    assert_eq!(status, RootConfigStatus::MissingUtf8);
+}
+
+#[test]
+fn root_config_status_accepts_utf8_root_section() {
+    let dir = TempDir::new().unwrap();
+    write_temp(
+        dir.path(),
+        ".editorconfig",
+        "root = true\n\n[*]\ncharset = utf-8\n",
+    );
+
+    let mut cache = PolicyCache::new();
+    let status = cache.root_config_status(dir.path());
+
+    assert_eq!(status, RootConfigStatus::Ready);
 }
 
 // --- no-op when both policies are off ---

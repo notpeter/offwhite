@@ -10,8 +10,8 @@ mod tests;
 use std::path::PathBuf;
 use std::process::ExitCode;
 
-use crate::action::{check_file_with, fix_file, walk_paths};
-use crate::configs::PolicyCache;
+use crate::action::{FileStatus, check_file_with, fix_file, walk_paths};
+use crate::configs::{PolicyCache, RootConfigStatus};
 use crate::inits::{init_editorconfig, init_ignore_revs};
 use crate::violation::ViolationKind;
 
@@ -237,16 +237,35 @@ fn main() -> ExitCode {
     let mut policy_cache = PolicyCache::new();
 
     let cwd = std::env::current_dir().unwrap_or_else(|_| PathBuf::from("."));
-    if !policy_cache.has_editorconfigs(&cwd) {
-        if verbosity >= Verbosity::Normal {
-            eprintln!("warning: no .editorconfig files found; nothing checked");
+    match policy_cache.root_config_status(&cwd) {
+        RootConfigStatus::Ready => {}
+        RootConfigStatus::Missing => {
+            if verbosity >= Verbosity::Normal {
+                eprintln!("warning: no root .editorconfig file found; nothing checked");
+            }
+            return ExitCode::FAILURE;
         }
-        return ExitCode::FAILURE;
+        RootConfigStatus::MissingUtf8 => {
+            if verbosity >= Verbosity::Normal {
+                eprintln!(
+                    "warning: root .editorconfig must contain `charset = utf-8` in a `[*]` section; nothing checked"
+                );
+            }
+            return ExitCode::FAILURE;
+        }
     }
 
     let mut found_violations = false;
     walk_paths(cli.paths(), !cli.options.no_ignore, |path| {
-        let mut policy = policy_cache.file_policy(&path);
+        let decision = policy_cache.file_policy(&path);
+        if decision.skipped_non_utf8_sections && verbosity >= Verbosity::Verbose {
+            eprintln!(
+                "warning: {}: skipped .editorconfig sections with non-utf-8 charset",
+                path.display()
+            );
+        }
+
+        let mut policy = decision.policy;
         policy.single_final_newline = cli.options.single_final_newline;
         if !policy.trim_trailing_whitespace
             && !policy.insert_final_newline
@@ -256,12 +275,19 @@ fn main() -> ExitCode {
         }
 
         match action {
-            Action::Fix => {
-                if let Err(e) = fix_file(&path, policy) {
+            Action::Fix => match fix_file(&path, policy) {
+                Ok(FileStatus::Processed) => {}
+                Ok(FileStatus::InvalidUtf8) => {
+                    if verbosity >= Verbosity::Normal {
+                        eprintln!("warning: {}: invalid UTF-8; skipped", path.display());
+                    }
+                    found_violations = true;
+                }
+                Err(e) => {
                     eprintln!("{}: error fixing: {e}", path.display());
                     found_violations = true;
                 }
-            }
+            },
             Action::Check => {
                 let mut saw_line_ending_mismatch = false;
                 match check_file_with(&path, policy, |violation| {
@@ -278,7 +304,13 @@ fn main() -> ExitCode {
                         _ => println!("{violation}"),
                     }
                 }) {
-                    Ok(()) => {}
+                    Ok(FileStatus::Processed) => {}
+                    Ok(FileStatus::InvalidUtf8) => {
+                        if verbosity >= Verbosity::Normal {
+                            eprintln!("warning: {}: invalid UTF-8; skipped", path.display());
+                        }
+                        found_violations = true;
+                    }
                     Err(e) => {
                         eprintln!("{}: error: {e}", path.display());
                         found_violations = true;
