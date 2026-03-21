@@ -8,16 +8,6 @@ Check and fix trailing whitespace and final newlines, driven by `.editorconfig`.
 ## Usage
 
 ```
-offwhite [check|fix] [OPTIONS] [PATHS]...
-```
-
-Paths default to `.`.
-Directories are walked recursively, respecting `.ignore` and `.gitignore` (including nested).
-`check` is the default action when none is provided.
-
-## Help
-
-```
 Offwhite enforces .editconfig whitespace and newline settings
 
 Usage:
@@ -34,12 +24,18 @@ Options:
   -h, --help                  Print help
 ```
 
+`check` is the default action when none is provided.
+
+If not `PATHS` are provided, default to the current directory: `.`
+
+Directories are walked recursively, respecting `.editorconfig`, `.ignore` and `.gitignore`.
+
 ## .editorconfig
 
-offwhite reads `.editorconfig` files to decide which files to check and the rules to enforce.
+offwhite reads `.editorconfig` files to determine what to check/fix and which rules to enforce.
 Multiple `.editorconfig` files in nested directories are supported.
 
-Offwhite enforces compliance with the follow `.editorconfig` keys (if set):
+Offwhite enforces compliance with the follow `.editorconfig` keys (when set):
 
 | Property                          | Effect                                       |
 | --------------------------------- | -------------------------------------------- |
@@ -93,8 +89,8 @@ To exclude/ignore certain files/directories you have a few options:
 1. Add path(s) to a `.ignore` file:
 
    Offwhite supports the same [`.ignore`](https://github.com/BurntSushi/ripgrep/blob/master/GUIDE.md#automatic-filtering)
-   files used by ripgrep to ignore specific files. These are structured like a `.gitignore` file
-   but will cause `offwhite` and ripgrep to not scan certain files or directories.
+   files used by `ripgrep` to ignore specific files. These are structured like a `.gitignore` file
+   but will cause `offwhite` (and ripgrep) to not scan certain files or directories.
 
    As with `.gitignore` files, `.ignore` files may be placed at the root of your project
    or within specific subdirectories. To ignore an specific directory you can create a
@@ -110,13 +106,13 @@ To exclude/ignore certain files/directories you have a few options:
    whatever/directory/
    ```
 
-   This is appropriate for binary files you'd like text-processing tools like ripgrep/offwhite to skip.
+   This is appropriate for binary files you'd like text-processing tools like `ripgrep`/`offwhite` to skip.
 
 2. Specify the correct values `.editorconfig`:
 
-   If you have files in your repository have different whitespace / linebreak needs,
-   you can specify the correct settings (e.g. CRLF for certain files) or you can
-   direct `.editorconfig` to apply a more specific configuration for certain paths.
+   If files in your repository have different whitespace / linebreak needs,
+   you can edit your `.editorconfig` specify correct settings
+   (e.g. CRLF for certain files) for certain paths.
 
    ```editorconfig
    root = true
@@ -157,8 +153,6 @@ To exclude/ignore certain files/directories you have a few options:
 
 ### No --include or --exclude
 
-Or add the files/directories to a `.ignore` file.
-
 Q: Why don't you include a runtime option to `--exclude` or `--include` globs?
 A: The goal of the project is to support automated enforcement of the same rules used by
 editors that support the `editorconfig` standard editing files within a git repo,
@@ -176,6 +170,17 @@ files or (c) pass explicit files or directories at runtime.
 > - [`.editorconfig` wildcards](https://editorconfig.org/#wildcards) are case-sensitive globs
 >   and support complex globbing syntax like `[**/tests/{output/*,*.out.txt}]`, `[*.[Pp][Yy]]`
 > - To match files non-recursively, use a leading slash in the `.editorconfig` section like `[/*.md]`
+
+## Git Blame Ignore Revs
+
+When making whitespace-only corrections to existing repositories, afterwards you can optionally
+create a `.git-blame-ignore-revs` file which contain git commit ids which should be considered
+transparent for git blame purposes. This means if you convert a tree from CRLF it is possible
+to preserve meaningful Git Blame information.
+
+Running `offwhite init-ignore-revs` will create you an template `.git-blame-ignore-revs` file
+which contains instructions on how to configure git repo locally to use that file. GitHub and
+GitLab natively support this out of the box.
 
 ## Limitations
 
