@@ -178,11 +178,6 @@ impl Default for FilePolicy {
     }
 }
 
-/// Look up .editorconfig properties for a file path.
-pub fn file_policy(path: &Path) -> FilePolicy {
-    PolicyCache::new().file_policy(path)
-}
-
 fn policy_from_properties(props: &Properties) -> FilePolicy {
     FilePolicy {
         trim_trailing_whitespace: matches!(

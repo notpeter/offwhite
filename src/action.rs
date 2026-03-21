@@ -61,11 +61,31 @@ struct ParsedLine {
     ending: Option<LineEnding>,
 }
 
-fn parse_lines(contents: &str) -> Vec<ParsedLine> {
+#[derive(Clone, Copy)]
+struct ScanState {
+    total_lines: u64,
+    previous_line_ended: bool,
+    last_line_ended: bool,
+    last_line_empty: bool,
+}
+
+impl ScanState {
+    const fn new() -> Self {
+        Self {
+            total_lines: 0,
+            previous_line_ended: false,
+            last_line_ended: false,
+            last_line_empty: false,
+        }
+    }
+}
+
+fn scan_lines(contents: &str, mut on_line: impl FnMut(u64, &str, Option<LineEnding>)) -> ScanState {
     let bytes = contents.as_bytes();
-    let mut lines = Vec::new();
     let mut start = 0;
     let mut i = 0;
+    let mut line_number = 1_u64;
+    let mut state = ScanState::new();
 
     while i < bytes.len() {
         let ending = match bytes[i] {
@@ -76,10 +96,13 @@ fn parse_lines(contents: &str) -> Vec<ParsedLine> {
         };
 
         if let Some((line_ending, width)) = ending {
-            lines.push(ParsedLine {
-                text: contents[start..i].to_string(),
-                ending: Some(line_ending),
-            });
+            let text = &contents[start..i];
+            on_line(line_number, text, Some(line_ending));
+            state.previous_line_ended = state.last_line_ended;
+            state.last_line_ended = true;
+            state.last_line_empty = text.is_empty();
+            state.total_lines += 1;
+            line_number += 1;
             i += width;
             start = i;
         } else {
@@ -88,11 +111,25 @@ fn parse_lines(contents: &str) -> Vec<ParsedLine> {
     }
 
     if start < contents.len() {
-        lines.push(ParsedLine {
-            text: contents[start..].to_string(),
-            ending: None,
-        });
+        let text = &contents[start..];
+        on_line(line_number, text, None);
+        state.previous_line_ended = state.last_line_ended;
+        state.last_line_ended = false;
+        state.last_line_empty = text.is_empty();
+        state.total_lines += 1;
     }
+
+    state
+}
+
+fn parse_lines(contents: &str) -> Vec<ParsedLine> {
+    let mut lines = Vec::new();
+    scan_lines(contents, |_, text, ending| {
+        lines.push(ParsedLine {
+            text: text.to_string(),
+            ending,
+        });
+    });
 
     lines
 }
@@ -105,7 +142,16 @@ fn inferred_line_ending(lines: &[ParsedLine]) -> LineEnding {
 }
 
 fn render_lines(lines: &[ParsedLine]) -> String {
-    let mut output = String::new();
+    let capacity = lines.iter().fold(0, |total, line| {
+        total
+            + line.text.len()
+            + match line.ending {
+                Some(LineEnding::Lf | LineEnding::Cr) => 1,
+                Some(LineEnding::CrLf) => 2,
+                None => 0,
+            }
+    });
+    let mut output = String::with_capacity(capacity);
     for line in lines {
         output.push_str(&line.text);
         if let Some(ending) = line.ending {
@@ -119,16 +165,16 @@ fn render_lines(lines: &[ParsedLine]) -> String {
     output
 }
 
-fn push_check_violations(
-    violations: &mut Vec<Violation>,
+fn emit_check_violations(
     path: &Path,
     line_number: u64,
     text: &str,
     ending: Option<LineEnding>,
     policy: FilePolicy,
+    mut on_violation: impl FnMut(Violation),
 ) {
     if policy.trim_trailing_whitespace && text.ends_with([' ', '\t']) {
-        violations.push(Violation {
+        on_violation(Violation {
             path: path.to_owned(),
             line: line_number,
             kind: ViolationKind::TrailingWhitespace,
@@ -137,7 +183,7 @@ fn push_check_violations(
 
     if let (Some(expected), Some(found)) = (policy.end_of_line, ending) {
         if found != expected {
-            violations.push(Violation {
+            on_violation(Violation {
                 path: path.to_owned(),
                 line: line_number,
                 kind: ViolationKind::IncorrectLineEnding { expected, found },
@@ -146,79 +192,38 @@ fn push_check_violations(
     }
 }
 
-pub fn check_file(
+pub fn check_file_with(
     path: &Path,
     policy: FilePolicy,
-) -> Result<Vec<Violation>, Box<dyn std::error::Error>> {
+    mut on_violation: impl FnMut(Violation),
+) -> Result<(), Box<dyn std::error::Error>> {
     let contents = fs::read_to_string(path)?;
-    let mut violations = Vec::new();
-    let bytes = contents.as_bytes();
-    let mut start = 0;
-    let mut i = 0;
-    let mut line_number = 1_u64;
-    let mut total_lines = 0_u64;
-    let mut previous_line_ended = false;
-    let mut last_line_ended = false;
-    let mut last_line_empty = false;
-
-    while i < bytes.len() {
-        let ending = match bytes[i] {
-            b'\n' => Some((LineEnding::Lf, 1)),
-            b'\r' if i + 1 < bytes.len() && bytes[i + 1] == b'\n' => Some((LineEnding::CrLf, 2)),
-            b'\r' => Some((LineEnding::Cr, 1)),
-            _ => None,
-        };
-
-        if let Some((line_ending, width)) = ending {
-            let text = &contents[start..i];
-            push_check_violations(
-                &mut violations,
-                path,
-                line_number,
-                text,
-                Some(line_ending),
-                policy,
-            );
-            previous_line_ended = last_line_ended;
-            last_line_ended = true;
-            last_line_empty = text.is_empty();
-            total_lines += 1;
-            line_number += 1;
-            i += width;
-            start = i;
-        } else {
-            i += 1;
-        }
-    }
-
-    if start < contents.len() {
-        let text = &contents[start..];
-        push_check_violations(&mut violations, path, line_number, text, None, policy);
-        previous_line_ended = last_line_ended;
-        last_line_ended = false;
-        last_line_empty = text.is_empty();
-        total_lines += 1;
-    }
+    let state = scan_lines(&contents, |line_number, text, ending| {
+        emit_check_violations(path, line_number, text, ending, policy, &mut on_violation);
+    });
 
     if policy.insert_final_newline {
         if !contents.is_empty() {
-            if !last_line_ended {
-                violations.push(Violation {
+            if !state.last_line_ended {
+                on_violation(Violation {
                     path: path.to_owned(),
-                    line: total_lines,
+                    line: state.total_lines,
                     kind: ViolationKind::NoFinalNewline,
                 });
-            } else if policy.single_final_newline && previous_line_ended && last_line_empty {
-                violations.push(Violation {
+            } else if policy.single_final_newline
+                && state.previous_line_ended
+                && state.last_line_empty
+            {
+                on_violation(Violation {
                     path: path.to_owned(),
-                    line: total_lines,
+                    line: state.total_lines,
                     kind: ViolationKind::ExtraFinalNewlines,
                 });
             }
         }
     }
 
-    Ok(violations)
+    Ok(())
 }
 
 pub fn fix_file(path: &Path, policy: FilePolicy) -> Result<(), Box<dyn std::error::Error>> {

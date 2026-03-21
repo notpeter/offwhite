@@ -10,10 +10,10 @@ mod tests;
 use std::path::PathBuf;
 use std::process::ExitCode;
 
-use crate::action::{check_file, fix_file, walk_paths};
+use crate::action::{check_file_with, fix_file, walk_paths};
 use crate::configs::PolicyCache;
 use crate::inits::{init_editorconfig, init_ignore_revs};
-use crate::violation::{Violation, ViolationKind};
+use crate::violation::ViolationKind;
 
 use clap::{Args, Parser, Subcommand};
 
@@ -211,30 +211,6 @@ where
     }
 }
 
-pub(crate) fn display_violations<'a>(
-    violations: &'a [Violation],
-    verbosity: Verbosity,
-) -> Vec<&'a Violation> {
-    if verbosity >= Verbosity::Verbose {
-        return violations.iter().collect();
-    }
-
-    let mut displayed = Vec::with_capacity(violations.len());
-    let mut saw_line_ending_mismatch = false;
-
-    for violation in violations {
-        match violation.kind {
-            ViolationKind::IncorrectLineEnding { .. } if saw_line_ending_mismatch => {}
-            ViolationKind::IncorrectLineEnding { .. } => {
-                saw_line_ending_mismatch = true;
-                displayed.push(violation);
-            }
-            _ => displayed.push(violation),
-        }
-    }
-
-    displayed
-}
 fn main() -> ExitCode {
     let cli = parse_cli();
     let action = cli.action();
@@ -286,21 +262,29 @@ fn main() -> ExitCode {
                     found_violations = true;
                 }
             }
-            Action::Check => match check_file(&path, policy) {
-                Ok(violations) => {
-                    let displayed = display_violations(&violations, verbosity);
-                    for v in displayed {
-                        println!("{v}");
+            Action::Check => {
+                let mut saw_line_ending_mismatch = false;
+                match check_file_with(&path, policy, |violation| {
+                    found_violations = true;
+                    match violation.kind {
+                        ViolationKind::IncorrectLineEnding { .. }
+                            if verbosity < Verbosity::Verbose =>
+                        {
+                            if !saw_line_ending_mismatch {
+                                saw_line_ending_mismatch = true;
+                                println!("{violation}");
+                            }
+                        }
+                        _ => println!("{violation}"),
                     }
-                    if !violations.is_empty() {
+                }) {
+                    Ok(()) => {}
+                    Err(e) => {
+                        eprintln!("{}: error: {e}", path.display());
                         found_violations = true;
                     }
                 }
-                Err(e) => {
-                    eprintln!("{}: error: {e}", path.display());
-                    found_violations = true;
-                }
-            },
+            }
             Action::Init | Action::InitIgnoreRevs => unreachable!(),
         }
     });

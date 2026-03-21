@@ -3,11 +3,9 @@ use std::path::Path;
 use tempfile::TempDir;
 
 use crate::{
-    Verbosity,
-    action::walk_paths,
-    check_file,
-    configs::{FilePolicy, LineEnding, file_policy},
-    display_violations, fix_file,
+    action::{check_file_with, walk_paths},
+    configs::{FilePolicy, LineEnding, PolicyCache},
+    fix_file,
     violation::ViolationKind,
 };
 
@@ -76,6 +74,15 @@ fn collect_walked_paths(paths: &[String], respect_ignore_files: bool) -> Vec<std
     files
 }
 
+fn check_file(
+    path: &Path,
+    policy: FilePolicy,
+) -> Result<Vec<crate::violation::Violation>, Box<dyn std::error::Error>> {
+    let mut violations = Vec::new();
+    check_file_with(path, policy, |violation| violations.push(violation))?;
+    Ok(violations)
+}
+
 #[test]
 fn walk_paths_includes_files_from_directory_argument() {
     let dir = TempDir::new().unwrap();
@@ -142,6 +149,22 @@ fn check_trailing_whitespace_multiple_lines() {
     assert_eq!(violations[0].line, 1);
     assert_eq!(violations[1].line, 3);
     assert_eq!(violations[2].line, 4);
+}
+
+#[test]
+fn check_file_with_streams_violations_in_order() {
+    let dir = TempDir::new().unwrap();
+    let path = write_temp(dir.path(), "stream.rs", "a \nb");
+    let mut seen = Vec::new();
+
+    check_file_with(&path, ALL_CHECKS, |violation| {
+        seen.push((violation.line, violation.kind));
+    })
+    .unwrap();
+
+    assert_eq!(seen.len(), 2);
+    assert!(matches!(seen[0], (1, ViolationKind::TrailingWhitespace)));
+    assert!(matches!(seen[1], (2, ViolationKind::NoFinalNewline)));
 }
 
 #[test]
@@ -261,42 +284,45 @@ fn check_end_of_line_reports_mismatches() {
 }
 
 #[test]
-fn display_violations_collapses_line_ending_mismatches_by_default() {
+fn check_end_of_line_reports_all_mismatches() {
     let dir = TempDir::new().unwrap();
     let path = write_temp(dir.path(), "f.rs", "hello\nworld\n");
     let violations = check_file(&path, CRLF_ONLY).unwrap();
 
-    let displayed = display_violations(&violations, Verbosity::Normal);
-
-    assert_eq!(displayed.len(), 1);
+    assert_eq!(violations.len(), 2);
     assert!(matches!(
-        displayed[0].kind,
+        violations[0].kind,
         ViolationKind::IncorrectLineEnding { .. }
     ));
-    assert_eq!(displayed[0].line, 1);
+    assert!(matches!(
+        violations[1].kind,
+        ViolationKind::IncorrectLineEnding { .. }
+    ));
+    assert_eq!(violations[0].line, 1);
+    assert_eq!(violations[1].line, 2);
 }
 
 #[test]
-fn display_violations_keeps_all_line_ending_mismatches_in_verbose_mode() {
+fn check_end_of_line_stream_reports_all_mismatches() {
     let dir = TempDir::new().unwrap();
     let path = write_temp(dir.path(), "f.rs", "hello\nworld\n");
-    let violations = check_file(&path, CRLF_ONLY).unwrap();
+    let mut seen = Vec::new();
 
-    let displayed = display_violations(&violations, Verbosity::Verbose);
+    check_file_with(&path, CRLF_ONLY, |violation| seen.push(violation)).unwrap();
 
-    assert_eq!(displayed.len(), 2);
+    assert_eq!(seen.len(), 2);
     assert!(matches!(
-        displayed[0].kind,
+        seen[0].kind,
         ViolationKind::IncorrectLineEnding { .. }
     ));
     assert!(matches!(
-        displayed[1].kind,
+        seen[1].kind,
         ViolationKind::IncorrectLineEnding { .. }
     ));
 }
 
 #[test]
-fn display_violations_preserves_other_violation_kinds() {
+fn check_reports_mixed_violation_kinds_in_order() {
     let dir = TempDir::new().unwrap();
     let path = write_temp(dir.path(), "f.rs", "hello \nworld");
     let policy = FilePolicy {
@@ -307,18 +333,17 @@ fn display_violations_preserves_other_violation_kinds() {
     };
 
     let violations = check_file(&path, policy).unwrap();
-    let displayed = display_violations(&violations, Verbosity::Normal);
 
-    assert_eq!(displayed.len(), 3);
+    assert_eq!(violations.len(), 3);
     assert!(matches!(
-        displayed[0].kind,
+        violations[0].kind,
         ViolationKind::TrailingWhitespace
     ));
     assert!(matches!(
-        displayed[1].kind,
+        violations[1].kind,
         ViolationKind::IncorrectLineEnding { .. }
     ));
-    assert!(matches!(displayed[2].kind, ViolationKind::NoFinalNewline));
+    assert!(matches!(violations[2].kind, ViolationKind::NoFinalNewline));
 }
 
 // --- fix_file tests ---
@@ -460,7 +485,8 @@ fn file_policy_reads_editorconfig() {
     write_temp(dir.path(), ".editorconfig", ec);
     let path = write_temp(dir.path(), "test.rs", "hello   ");
 
-    let policy = file_policy(&path);
+    let mut cache = PolicyCache::new();
+    let policy = cache.file_policy(&path);
     assert!(policy.trim_trailing_whitespace);
     assert!(policy.insert_final_newline);
     assert_eq!(policy.end_of_line, Some(LineEnding::CrLf));
@@ -476,15 +502,17 @@ fn file_policy_respects_glob_sections() {
     let md_path = write_temp(dir.path(), "test.md", "");
     let txt_path = write_temp(dir.path(), "test.txt", "");
 
-    let rs_policy = file_policy(&rs_path);
+    let mut cache = PolicyCache::new();
+
+    let rs_policy = cache.file_policy(&rs_path);
     assert!(rs_policy.trim_trailing_whitespace);
     assert!(!rs_policy.insert_final_newline);
 
-    let md_policy = file_policy(&md_path);
+    let md_policy = cache.file_policy(&md_path);
     assert!(!md_policy.trim_trailing_whitespace);
     assert!(md_policy.insert_final_newline);
 
-    let txt_policy = file_policy(&txt_path);
+    let txt_policy = cache.file_policy(&txt_path);
     assert!(!txt_policy.trim_trailing_whitespace);
     assert!(!txt_policy.insert_final_newline);
     assert_eq!(txt_policy.end_of_line, None);
@@ -498,7 +526,8 @@ fn file_policy_defaults_to_off() {
     write_temp(dir.path(), ".editorconfig", ec);
     let path = write_temp(dir.path(), "test.rs", "hello   ");
 
-    let policy = file_policy(&path);
+    let mut cache = PolicyCache::new();
+    let policy = cache.file_policy(&path);
     assert!(!policy.trim_trailing_whitespace);
     assert!(!policy.insert_final_newline);
     assert_eq!(policy.end_of_line, None);
