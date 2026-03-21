@@ -2,17 +2,12 @@ use std::fs;
 use std::path::{Path, PathBuf};
 
 use crate::configs::{FilePolicy, LineEnding};
-use crate::ignores::{build_default_ignores, build_ignore_overrides};
+use crate::ignores::build_default_ignores;
 use crate::violation::{Violation, ViolationKind};
 
 use ignore::WalkBuilder;
 
-fn walk_dir(
-    dir: &Path,
-    respect_ignore_files: bool,
-    include_glob: Option<&str>,
-    out: &mut Vec<PathBuf>,
-) {
+fn walk_dir(dir: &Path, respect_ignore_files: bool, mut on_file: impl FnMut(PathBuf)) {
     let mut builder = WalkBuilder::new(dir);
     let default_ignores = build_default_ignores(dir);
     builder
@@ -30,16 +25,12 @@ fn walk_dir(
             .is_ignore()
     });
 
-    if let Some(glob) = include_glob {
-        builder.overrides(build_ignore_overrides(dir, Some(glob)));
-    }
-
     let walker = builder.build();
 
     for entry in walker {
         match entry {
             Ok(e) if e.file_type().is_some_and(|ft| ft.is_file()) => {
-                out.push(e.into_path());
+                on_file(e.into_path());
             }
             Err(e) => eprintln!("walk error: {e}"),
             _ => {}
@@ -47,41 +38,21 @@ fn walk_dir(
     }
 }
 
-pub(crate) fn contains_glob_meta(s: &str) -> bool {
-    s.contains('*') || s.contains('?') || s.contains('[') || s.contains('{')
-}
-
-pub(crate) fn normalize_cli_pattern(s: &str) -> &str {
-    s.strip_prefix("./").unwrap_or(s)
-}
-
-pub(crate) fn resolve_paths(patterns: &[String], respect_ignore_files: bool) -> Vec<PathBuf> {
-    let mut files = Vec::new();
-
-    for pattern in patterns {
-        let pattern = normalize_cli_pattern(pattern);
-        if contains_glob_meta(pattern) {
-            walk_dir(
-                Path::new("."),
-                respect_ignore_files,
-                Some(pattern),
-                &mut files,
-            );
+pub(crate) fn walk_paths(
+    paths: &[String],
+    respect_ignore_files: bool,
+    mut on_file: impl FnMut(PathBuf),
+) {
+    for path in paths {
+        let path = PathBuf::from(path);
+        if path.is_file() {
+            on_file(path);
+        } else if path.is_dir() {
+            walk_dir(&path, respect_ignore_files, &mut on_file);
         } else {
-            let path = PathBuf::from(pattern);
-            if path.is_file() {
-                files.push(path);
-            } else if path.is_dir() {
-                walk_dir(&path, respect_ignore_files, None, &mut files);
-            } else {
-                eprintln!("{}: no such file or directory", path.display());
-            }
+            eprintln!("{}: no such file or directory", path.display());
         }
     }
-
-    files.sort();
-    files.dedup();
-    files
 }
 
 #[derive(Clone)]

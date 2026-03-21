@@ -127,26 +127,6 @@ pub const DEFAULT_GLOBS: &[&str] = &[
     "!OFL.txt", // LOL line 21 has trailing whitespace
 ];
 
-pub(crate) fn build_ignore_overrides(
-    base: &Path,
-    include_glob: Option<&str>,
-) -> ignore::overrides::Override {
-    let mut builder = OverrideBuilder::new(base);
-    builder
-        .case_insensitive(true)
-        .expect("failed to set case insensitive");
-    for pat in DEFAULT_GLOBS {
-        builder.add(pat).expect("invalid default ignore glob");
-    }
-    builder
-        .case_insensitive(false)
-        .expect("failed to reset case insensitive");
-    if let Some(glob) = include_glob {
-        builder.add(glob).expect("invalid include glob");
-    }
-    builder.build().expect("failed to build overrides")
-}
-
 pub(crate) fn build_default_ignores(base: &Path) -> ignore::overrides::Override {
     let mut builder = OverrideBuilder::new(base);
     builder

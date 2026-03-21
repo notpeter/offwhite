@@ -8,13 +8,10 @@ Check and fix trailing whitespace and final newlines, driven by `.editorconfig`.
 ## Usage
 
 ```
-offwhite check [OPTIONS] [PATHS]...
-offwhite fix [OPTIONS] [PATHS]...
-offwhite init
-offwhite init-ignore-revs
+offwhite [check|fix] [OPTIONS] [PATHS]...
 ```
 
-Paths default to `.` and support glob patterns (`*`, `**/*.rs`).
+Paths default to `.`.
 Directories are walked recursively, respecting `.ignore` and `.gitignore` (including nested).
 `check` is the default action when none is provided.
 
@@ -46,7 +43,7 @@ Offwhite only enforces the following properties:
 
 | Property                          | Effect                                       |
 | --------------------------------- | -------------------------------------------- |
-| `end_of_line = lf|crlf|cr`        | Check/fix line endings                       |
+| `end_of_line = lf`                | Check/fix line endings (`lf` or `crlf`)      |
 | `trim_trailing_whitespace = true` | Check/fix trailing whitespace on lines       |
 | `insert_final_newline = true`     | Check/fix missing or extra trailing newlines |
 
@@ -69,6 +66,7 @@ Like ripgrep, by default `offwhite` will not process paths excluded by `.ignore`
 Unlike `ripgrep`, directories with a leading `.` are not skipped to ensure things like `.github/**` are checked.
 
 Additionally, `offwhite` bundles an ignore list which by-default excludes:
+
 - Source control directories: `.git/`, `.svn/`, `.hg/`
 - License files: `license*`, `COPYING`, etc
 - Patch files: `*.patch`, `*.diff`, `*.rej`, `*.patchset`.
@@ -81,54 +79,65 @@ To exclude/ignore certain files/directories you have a few options:
 
 1. Add path(s) to a `.ignore` file:
 
-    Offwhite supports the same [`.ignore`](https://github.com/BurntSushi/ripgrep/blob/master/GUIDE.md#automatic-filtering)
-    files used by ripgrep to ignore specific files.  These are structured like a `.gitignore` file
-    but will cause `offwhite` and ripgrep to not scan certain files or directories.
+   Offwhite supports the same [`.ignore`](https://github.com/BurntSushi/ripgrep/blob/master/GUIDE.md#automatic-filtering)
+   files used by ripgrep to ignore specific files. These are structured like a `.gitignore` file
+   but will cause `offwhite` and ripgrep to not scan certain files or directories.
 
-    As with `.gitignore` files, `.ignore` files may be placed at the root of your project
-    or within specific subdirectories.  To ignore an entire directory just create a
-    `.ignore` file with `.` as its contents:
+   As with `.gitignore` files, `.ignore` files may be placed at the root of your project
+   or within specific subdirectories. To ignore an specific directory you can create a
+   `.ignore` file with `*` as its contents:
 
-    ```sh
-    echo . > whatever/directory/.ignore
-    ```
+   ```sh
+   echo '*' > whatever/directory/.ignore
+   ```
 
-    This is appropriate for binary files or other files you would never want ripgrep
-    or other text-processing tools to attempt to scan.
+   Or in a top-level .ignore file:
+
+   ```sh
+   whatever/directory/
+   ```
+
+   This is appropriate for binary files you'd like text-processing tools like ripgrep/offwhite to skip.
 
 2. Specify the correct values `.editorconfig`:
 
-    If you have files in your repository have different whitespace / linebreak needs,
-    you can specify the correct settings (e.g. CRLF for certain files) or you can
-    direct `.editorconfig` to apply a more specific configuration for certain paths.
+   If you have files in your repository have different whitespace / linebreak needs,
+   you can specify the correct settings (e.g. CRLF for certain files) or you can
+   direct `.editorconfig` to apply a more specific configuration for certain paths.
 
-    ```editorconfig
-    root = true
-    [*]
-    end_of_line = lf
-    trim_trailing_whitespace = true
-    insert_final_newline = true
+   ```editorconfig
+   root = true
+   [*]
+   end_of_line = lf
+   trim_trailing_whitespace = true
+   insert_final_newline = true
 
-    [/vendor/windos_project/*.c]
-    end_of_line = crlf
-    trim_trailing_whitespace = unset
-    insert_final_newline = unset
+   [/vendor/windos_project/*.c]
+   end_of_line = crlf
+   trim_trailing_whitespace = unset
+   insert_final_newline = unset
 
-    [**/test_output/**]
-    trim_trailing_whitespace = false
-    insert_final_newline = false
-    ```
+   [**/test_output/**]
+   trim_trailing_whitespace = false
+   insert_final_newline = false
+   ```
 
-    Just as with `.gitignore` / `.ignore` you can also put these in a subdirectory.
-    If you `.editconfig` does not contain `root = true` it will inherit any settings
-    from `.editorconfig` in parent directories. If a subdirectory `.editorconfig`
-    includes `root = true` then any parent `.editorconfig` files will be ignored.
+   Just as with `.gitignore` / `.ignore` you can also put these in a subdirectory.
+   If you `.editconfig` does not contain `root = true` it will inherit any settings
+   from `.editorconfig` in parent directories. If a subdirectory `.editorconfig`
+   includes `root = true` then any parent `.editorconfig` files will be ignored.
 
-    To make `.editorconfig` not apply to a given `root = true` is all you need:
+   To make `.editorconfig` not apply to a given `root = true` is all you need:
 
-    ```sh
-    echo 'root = true' > vendor/.editorconfig
-    ```
+   ```sh
+   echo 'root = true' > vendor/.editorconfig
+   ```
+
+3. Don't apply rules with a global `[*]` in your .editconfig
+
+   If `offwhite` is triggering false positives on many files and you have a default `[*]` editconfig
+   section, you might want to consider removing that and replace it with path specific and/or
+   extension specific rules like `[/src/**/*.rs]` or `[*.{rs,py,ts,md,asciidoc}]`.
 
 ### No --include or --exclude
 
@@ -139,19 +148,18 @@ A: The goal of the project is to support automated enforcement of the same rules
 editors that support the `editorconfig` standard editing files within a git repo,
 with no any additional configuration.
 If you don't wish to process directories (a) edit your `.editorconfig` (b) add `.ignore`
-files or (c) specify paths/globs `offwhite 'src/*.{toml,md,rs}` at runtime.
+files or (c) pass explicit files or directories at runtime.
+
 ### Glob notes
 
 > [!NOTE]
-> - Unquoted globs: `offwhite *.md` will be expanded by your shell and passed a list of files to `offwhite` as arguments.
-> There is a size limit to these arguments (`getconf ARG_MAX`), typically 1 or 2 MB, but sometimes smaller.
-> - Quoted globs: `offwhite '*.md'` will be handled by `offwhite` and expanded as `.editorconfig` globs.
-> Editconfig matches `*.md` recursively, so in practice `*.md` is like `**/*.md` in the shell.
-> To match files non-recursively, use `[/*.md]` in your `.editorconfig`.
+>
+> - Globs like `offwhite **/*.md` will be expanded by your shell, passing a list of files to `offwhite` as arguments.
+>   There is a size limit to these arguments (`getconf ARG_MAX`), typically 1 or 2 MB, but sometimes smaller.
 > - Globs in [src/ignores.rs](src/ignores.rs) are case insensitive.
-> - All other non-shell globs ([`.editorconfig` wildcards](https://editorconfig.org/#wildcards), etc)
->  are case-sensitive and support complex globbing syntax like
-> `[**/tests/{output/*,*.out.txt}]`,  `[*.[Pp][Yy]]`
+> - [`.editorconfig` wildcards](https://editorconfig.org/#wildcards) are case-sensitive globs
+>   and support complex globbing syntax like `[**/tests/{output/*,*.out.txt}]`, `[*.[Pp][Yy]]`
+> - To match files non-recursively, use a leading slash in the `.editorconfig` section like `[/*.md]`
 
 ## Dependencies
 

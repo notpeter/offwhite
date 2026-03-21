@@ -10,7 +10,7 @@ mod tests;
 use std::path::PathBuf;
 use std::process::ExitCode;
 
-use crate::action::{check_file, fix_file, resolve_paths};
+use crate::action::{check_file, fix_file, walk_paths};
 use crate::configs::{discover_editorconfigs, file_policy};
 use crate::inits::{init_editorconfig, init_ignore_revs};
 use crate::violation::{Violation, ViolationKind};
@@ -97,7 +97,7 @@ enum Command {
 
 #[derive(Args)]
 struct PathsArgs {
-    /// Files or directories to process (supports quoted glob patterns)
+    /// Files or directories to process
     #[arg(default_value = ".")]
     paths: Vec<String>,
 }
@@ -105,7 +105,7 @@ struct PathsArgs {
 #[derive(Args)]
 #[command(
     about = "Check for violations",
-    help_template = "{about-section}\nUsage: offwhite check [OPTIONS] [PATHS]...\n\nArguments:\n  [PATHS]...  Files or directories to process (supports quoted glob patterns) [default: .]\n\nOptions:\n  -q, --quiet                 Suppress warnings\n  -v, --verbose               Increase logging output\n      --single-final-newline  Enforce exactly one trailing newline (disabled by default)\n      --no-ignore             Do not respect .ignore or git ignore files\n  -h, --help                  Print help\n"
+    help_template = "{about-section}\nUsage: offwhite check [OPTIONS] [PATHS]...\n\nArguments:\n  [PATHS]...  Files or directories to process [default: .]\n\nOptions:\n  -q, --quiet                 Suppress warnings\n  -v, --verbose               Increase logging output\n      --single-final-newline  Enforce exactly one trailing newline (disabled by default)\n      --no-ignore             Do not respect .ignore or git ignore files\n  -h, --help                  Print help\n"
 )]
 struct CheckArgs {
     #[command(flatten)]
@@ -115,7 +115,7 @@ struct CheckArgs {
 #[derive(Args)]
 #[command(
     about = "Fix files in place",
-    help_template = "{about-section}\nUsage: offwhite fix [OPTIONS] [PATHS]...\n\nArguments:\n  [PATHS]...  Files or directories to process (supports quoted glob patterns) [default: .]\n\nOptions:\n  -q, --quiet                 Suppress warnings\n  -v, --verbose               Increase logging output\n      --single-final-newline  Enforce exactly one trailing newline (disabled by default)\n      --no-ignore             Do not respect .ignore or git ignore files\n  -h, --help                  Print help\n"
+    help_template = "{about-section}\nUsage: offwhite fix [OPTIONS] [PATHS]...\n\nArguments:\n  [PATHS]...  Files or directories to process [default: .]\n\nOptions:\n  -q, --quiet                 Suppress warnings\n  -v, --verbose               Increase logging output\n      --single-final-newline  Enforce exactly one trailing newline (disabled by default)\n      --no-ignore             Do not respect .ignore or git ignore files\n  -h, --help                  Print help\n"
 )]
 struct FixArgs {
     #[command(flatten)]
@@ -270,35 +270,25 @@ fn main() -> ExitCode {
         return ExitCode::FAILURE;
     }
 
-    let files = resolve_paths(cli.paths(), !cli.options.no_ignore);
-
-    if files.is_empty() {
-        if verbosity >= Verbosity::Normal {
-            eprintln!("warning: no files found");
-        }
-        return ExitCode::SUCCESS;
-    }
-
     let mut found_violations = false;
-
-    for path in &files {
-        let mut policy = file_policy(path);
+    walk_paths(cli.paths(), !cli.options.no_ignore, |path| {
+        let mut policy = file_policy(&path);
         policy.single_final_newline = cli.options.single_final_newline;
         if !policy.trim_trailing_whitespace
             && !policy.insert_final_newline
             && policy.end_of_line.is_none()
         {
-            continue;
+            return;
         }
 
         match action {
             Action::Fix => {
-                if let Err(e) = fix_file(path, policy) {
+                if let Err(e) = fix_file(&path, policy) {
                     eprintln!("{}: error fixing: {e}", path.display());
                     found_violations = true;
                 }
             }
-            Action::Check => match check_file(path, policy) {
+            Action::Check => match check_file(&path, policy) {
                 Ok(violations) => {
                     let displayed = display_violations(violations.clone(), verbosity);
                     for v in &displayed {
@@ -315,7 +305,7 @@ fn main() -> ExitCode {
             },
             Action::Init | Action::InitIgnoreRevs => unreachable!(),
         }
-    }
+    });
 
     if found_violations {
         ExitCode::FAILURE

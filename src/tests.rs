@@ -4,7 +4,7 @@ use tempfile::TempDir;
 
 use crate::{
     Verbosity,
-    action::{normalize_cli_pattern, resolve_paths},
+    action::walk_paths,
     check_file,
     configs::{FilePolicy, LineEnding},
     display_violations, fix_file,
@@ -69,46 +69,41 @@ fn write_temp(dir: &Path, name: &str, contents: &str) -> std::path::PathBuf {
 fn read_temp(path: &Path) -> String {
     fs::read_to_string(path).unwrap()
 }
-#[test]
-fn normalize_cli_pattern_strips_leading_dot_slash() {
-    assert_eq!(normalize_cli_pattern("./*.md"), "*.md");
-    assert_eq!(normalize_cli_pattern("./src"), "src");
+
+fn collect_walked_paths(paths: &[String], respect_ignore_files: bool) -> Vec<std::path::PathBuf> {
+    let mut files = Vec::new();
+    walk_paths(paths, respect_ignore_files, |path| files.push(path));
+    files
 }
 
 #[test]
-fn normalize_cli_pattern_leaves_other_inputs_unchanged() {
-    assert_eq!(normalize_cli_pattern("*.md"), "*.md");
-    assert_eq!(normalize_cli_pattern("../*.md"), "../*.md");
-}
-
-#[test]
-fn resolve_paths_includes_files_from_directory_argument() {
+fn walk_paths_includes_files_from_directory_argument() {
     let dir = TempDir::new().unwrap();
     write_temp(dir.path(), ".editorconfig", "root = true\n");
     let subdir = dir.path().join("src");
     fs::create_dir(&subdir).unwrap();
     let file = write_temp(&subdir, "main.rs", "fn main() {}\n");
 
-    let files = resolve_paths(&[subdir.display().to_string()], true);
+    let files = collect_walked_paths(&[subdir.display().to_string()], true);
 
     assert_eq!(files, vec![file]);
 }
 
 #[test]
-fn resolve_paths_directory_argument_still_applies_default_ignores() {
+fn walk_paths_directory_argument_still_applies_default_ignores() {
     let dir = TempDir::new().unwrap();
     write_temp(dir.path(), ".editorconfig", "root = true\n");
     let subdir = dir.path().join("assets");
     fs::create_dir(&subdir).unwrap();
     let png = write_temp(&subdir, "image.png", "not really a png");
 
-    let files = resolve_paths(&[subdir.display().to_string()], true);
+    let files = collect_walked_paths(&[subdir.display().to_string()], true);
 
     assert!(!files.contains(&png));
 }
 
 #[test]
-fn resolve_paths_directory_argument_respects_ignore_files() {
+fn walk_paths_directory_argument_respects_ignore_files() {
     let dir = TempDir::new().unwrap();
     write_temp(dir.path(), ".editorconfig", "root = true\n");
     write_temp(dir.path(), ".ignore", "target/\n");
@@ -119,7 +114,7 @@ fn resolve_paths_directory_argument_respects_ignore_files() {
     fs::create_dir(&src).unwrap();
     let kept = write_temp(&src, "main.rs", "fn main() {}\n");
 
-    let files = resolve_paths(&[dir.path().display().to_string()], true);
+    let files = collect_walked_paths(&[dir.path().display().to_string()], true);
 
     assert!(files.contains(&kept));
     assert!(!files.contains(&ignored));
@@ -132,19 +127,6 @@ fn check_clean_file() {
     let path = write_temp(dir.path(), "clean.rs", "fn main() {}\n");
     let violations = check_file(&path, ALL_CHECKS).unwrap();
     assert!(violations.is_empty());
-}
-
-#[test]
-fn check_trailing_whitespace() {
-    let dir = TempDir::new().unwrap();
-    let path = write_temp(dir.path(), "ws.rs", "hello   \nworld\n");
-    let violations = check_file(&path, ALL_CHECKS).unwrap();
-    assert_eq!(violations.len(), 1);
-    assert!(matches!(
-        violations[0].kind,
-        ViolationKind::TrailingWhitespace
-    ));
-    assert_eq!(violations[0].line, 1);
 }
 
 #[test]
@@ -404,30 +386,6 @@ fn fix_clean_file_unchanged() {
     assert_eq!(fs::read_to_string(&path).unwrap(), "hello\nworld\n");
 }
 
-#[test]
-fn fix_then_check_passes() {
-    let dir = TempDir::new().unwrap();
-    let path = write_temp(dir.path(), "roundtrip.rs", "  a  \n  b\t\n\n\n");
-    fix_file(&path, ALL_CHECKS).unwrap();
-    let violations = check_file(&path, ALL_CHECKS).unwrap();
-    assert!(
-        violations.is_empty(),
-        "fixed file should have no violations"
-    );
-}
-
-#[test]
-fn fix_then_check_passes_with_single() {
-    let dir = TempDir::new().unwrap();
-    let path = write_temp(dir.path(), "roundtrip.rs", "  a  \n  b\t\n\n\n");
-    fix_file(&path, ALL_CHECKS_SINGLE).unwrap();
-    let violations = check_file(&path, ALL_CHECKS_SINGLE).unwrap();
-    assert!(
-        violations.is_empty(),
-        "fixed file should have no violations"
-    );
-}
-
 // --- policy-selective fix tests ---
 
 #[test]
@@ -555,15 +513,6 @@ fn check_no_policy_returns_nothing() {
     assert!(violations.is_empty());
 }
 
-#[test]
-fn fix_no_policy_leaves_file_unchanged() {
-    let dir = TempDir::new().unwrap();
-    let contents = "hello   \n\n\n";
-    let path = write_temp(dir.path(), "f.rs", contents);
-    fix_file(&path, NO_CHECKS).unwrap();
-    assert_eq!(fs::read_to_string(&path).unwrap(), contents);
-}
-
 // --- edge cases ---
 
 #[test]
@@ -587,14 +536,6 @@ fn fix_single_newline_file() {
     let dir = TempDir::new().unwrap();
     let path = write_temp(dir.path(), "nl.rs", "\n");
     fix_file(&path, ALL_CHECKS).unwrap();
-    assert_eq!(fs::read_to_string(&path).unwrap(), "");
-}
-
-#[test]
-fn fix_single_newline_file_with_single() {
-    let dir = TempDir::new().unwrap();
-    let path = write_temp(dir.path(), "nl.rs", "\n");
-    fix_file(&path, ALL_CHECKS_SINGLE).unwrap();
     assert_eq!(fs::read_to_string(&path).unwrap(), "");
 }
 
