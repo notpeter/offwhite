@@ -49,7 +49,7 @@ impl Action {
     name = "offwhite",
     about = "Offwhite enforces .editconfig whitespace and newline settings",
     override_usage = "offwhite check [OPTIONS] [PATHS]...\n       offwhite fix [OPTIONS] [PATHS]...\n       offwhite init\n       offwhite init-ignore-revs",
-    help_template = "{about-section}\nUsage:\n  offwhite check [OPTIONS] [PATHS]...       Check for violations\n  offwhite fix [OPTIONS] [PATHS]...         Fix files in place\n  offwhite init                             Create an example .editorconfig\n  offwhite init-ignore-revs                 Create an example .git-blame-ignore-revs\n\nOptions:\n  -q, --quiet                 Suppress warnings\n  -v, --verbose               Increase logging output\n      --single-final-newline  Enforce exactly one trailing newline (disabled by default)\n      --no-ignore             Do not respect .ignore or git ignore files\n  -h, --help                  Print help\n\n",
+    help_template = "{about-section}\nUsage:\n  offwhite check [OPTIONS] [PATHS]...       Check for violations\n  offwhite fix [OPTIONS] [PATHS]...         Fix files in place\n  offwhite init                             Create an example .editorconfig\n  offwhite init-ignore-revs                 Create an example .git-blame-ignore-revs\n\nOptions:\n  -q, --quiet                 Suppress warnings\n  -v, --verbose               Increase logging output\n      --single-final-newline  Enforce exactly one trailing newline (disabled by default)\n      --no-ignore             Do not respect .ignore or .gitignore files\n  -h, --help                  Print help\n\n",
     disable_help_subcommand = true
 )]
 pub(crate) struct Cli {
@@ -74,7 +74,7 @@ struct Options {
     #[arg(long = "single-final-newline", global = true)]
     single_final_newline: bool,
 
-    /// Do not respect .ignore or git ignore files
+    /// Do not respect .ignore or .gitignore files
     #[arg(short = 'u', long = "no-ignore", global = true)]
     no_ignore: bool,
 }

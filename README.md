@@ -33,7 +33,7 @@ Options:
   -q, --quiet                 Suppress warnings
   -v, --verbose               Increase logging output
       --single-final-newline  Enforce exactly one trailing newline (disabled by default)
-      --no-ignore             Do not respect .ignore or git ignore files
+      --no-ignore             Do not respect .ignore or .gitignore files
   -h, --help                  Print help
 ```
 
@@ -65,7 +65,7 @@ insert_final_newline = true
 
 ## Ignore / Exclusions
 
-Like ripgrep, by default `offwhite` will not process paths excluded by `.ignore`, `.gitignore`, `.git/info/exclude`, or global Git ignore files (use `--no-ignore` to bypass).
+Like ripgrep, by default `offwhite` will not process paths excluded by `.ignore`, `.gitignore`, `.git/info/exclude`, or global Git Ignore files (use `--no-ignore` to bypass).
 Unlike `ripgrep`, directories with a leading `.` are not skipped to ensure things like `.github/**` are checked.
 
 Additionally, `offwhite` bundles an ignore list which by-default excludes:
