@@ -168,7 +168,6 @@ This project depends on the following crates:
 | Crate                                     | Repo                                                                                  | Purpose             |
 | ----------------------------------------- | ------------------------------------------------------------------------------------- | ------------------- |
 | [ec4rs](https://crates.io/crates/ec4rs)   | [TheDaemoness/ec4rs](https://github.com/TheDaemoness/ec4rs)                           | Editorconfig parser |
-| [grep](https://crates.io/crates/grep)     | [BurntSushi/ripgrep](https://github.com/BurntSushi/ripgrep/tree/master/crates/grep)   | Grep Engine         |
 | [ignore](https://crates.io/crates/ignore) | [BurntSushi/ripgrep](https://github.com/BurntSushi/ripgrep/tree/master/crates/ignore) | Gitignore parser    |
 
 ## License
