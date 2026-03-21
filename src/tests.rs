@@ -6,7 +6,7 @@ use crate::{
     Verbosity,
     action::walk_paths,
     check_file,
-    configs::{FilePolicy, LineEnding},
+    configs::{FilePolicy, LineEnding, file_policy},
     display_violations, fix_file,
     violation::ViolationKind,
 };
@@ -460,7 +460,7 @@ fn file_policy_reads_editorconfig() {
     write_temp(dir.path(), ".editorconfig", ec);
     let path = write_temp(dir.path(), "test.rs", "hello   ");
 
-    let policy = crate::file_policy(&path);
+    let policy = file_policy(&path);
     assert!(policy.trim_trailing_whitespace);
     assert!(policy.insert_final_newline);
     assert_eq!(policy.end_of_line, Some(LineEnding::CrLf));
@@ -476,15 +476,15 @@ fn file_policy_respects_glob_sections() {
     let md_path = write_temp(dir.path(), "test.md", "");
     let txt_path = write_temp(dir.path(), "test.txt", "");
 
-    let rs_policy = crate::file_policy(&rs_path);
+    let rs_policy = file_policy(&rs_path);
     assert!(rs_policy.trim_trailing_whitespace);
     assert!(!rs_policy.insert_final_newline);
 
-    let md_policy = crate::file_policy(&md_path);
+    let md_policy = file_policy(&md_path);
     assert!(!md_policy.trim_trailing_whitespace);
     assert!(md_policy.insert_final_newline);
 
-    let txt_policy = crate::file_policy(&txt_path);
+    let txt_policy = file_policy(&txt_path);
     assert!(!txt_policy.trim_trailing_whitespace);
     assert!(!txt_policy.insert_final_newline);
     assert_eq!(txt_policy.end_of_line, None);
@@ -498,7 +498,7 @@ fn file_policy_defaults_to_off() {
     write_temp(dir.path(), ".editorconfig", ec);
     let path = write_temp(dir.path(), "test.rs", "hello   ");
 
-    let policy = crate::file_policy(&path);
+    let policy = file_policy(&path);
     assert!(!policy.trim_trailing_whitespace);
     assert!(!policy.insert_final_newline);
     assert_eq!(policy.end_of_line, None);

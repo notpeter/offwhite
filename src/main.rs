@@ -11,7 +11,7 @@ use std::path::PathBuf;
 use std::process::ExitCode;
 
 use crate::action::{check_file, fix_file, walk_paths};
-use crate::configs::{discover_editorconfigs, file_policy};
+use crate::configs::PolicyCache;
 use crate::inits::{init_editorconfig, init_ignore_revs};
 use crate::violation::{Violation, ViolationKind};
 
@@ -258,12 +258,10 @@ fn main() -> ExitCode {
     }
 
     let verbosity = cli.verbosity();
+    let mut policy_cache = PolicyCache::new();
 
-    // Discover .editorconfig files from the current directory upward.
     let cwd = std::env::current_dir().unwrap_or_else(|_| PathBuf::from("."));
-    let editorconfigs = discover_editorconfigs(&cwd);
-
-    if editorconfigs.is_empty() {
+    if !policy_cache.has_editorconfigs(&cwd) {
         if verbosity >= Verbosity::Normal {
             eprintln!("warning: no .editorconfig files found; nothing checked");
         }
@@ -272,7 +270,7 @@ fn main() -> ExitCode {
 
     let mut found_violations = false;
     walk_paths(cli.paths(), !cli.options.no_ignore, |path| {
-        let mut policy = file_policy(&path);
+        let mut policy = policy_cache.file_policy(&path);
         policy.single_final_newline = cli.options.single_final_newline;
         if !policy.trim_trailing_whitespace
             && !policy.insert_final_newline
