@@ -4,9 +4,9 @@ version = "0.1.0"
 edition = "2024"
 
 [dependencies]
-clap = { version = "4", features = ["derive"] }
 ec4rs = { git = "https://github.com/TheDaemoness/ec4rs", rev = "c02623f77101289777711768b1cc8cad7b6bc37d" }
 ignore = "0.4"
+pico-args = "0.5"
 
 [dev-dependencies]
 tempfile = "3"

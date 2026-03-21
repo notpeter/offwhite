@@ -2,10 +2,10 @@ use std::collections::HashSet;
 use std::fs;
 use std::path::{Path, PathBuf};
 
-use crate::configs::{FilePolicy, LineEnding};
+use crate::args::{Action, Verbosity};
+use crate::configs::{FilePolicy, LineEnding, PolicyCache};
 use crate::ignores::build_default_ignores;
 use crate::violation::{Violation, ViolationKind};
-use crate::{Action, PolicyCache, Verbosity};
 
 use ignore::WalkBuilder;
 
