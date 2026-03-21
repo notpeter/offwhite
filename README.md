@@ -142,7 +142,8 @@ To exclude/ignore certain files/directories you have a few options:
    from `.editorconfig` in parent directories. If a subdirectory `.editorconfig`
    includes `root = true` then any parent `.editorconfig` files will be ignored.
 
-   To make `.editorconfig` not apply to a given `root = true` is all you need:
+   To prevent a `.editorconfig` in parent directory from applying, create a nested
+   `.editorconfig` which just contains `root = true`. This directory will be skipped.
 
    ```sh
    echo 'root = true' > vendor/.editorconfig

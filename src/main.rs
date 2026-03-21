@@ -7,6 +7,7 @@ mod violation;
 #[cfg(test)]
 mod tests;
 
+use std::collections::HashSet;
 use std::path::PathBuf;
 use std::process::ExitCode;
 
@@ -256,8 +257,19 @@ fn main() -> ExitCode {
     }
 
     let mut found_violations = false;
+    let mut warned_nested_roots = HashSet::new();
     walk_paths(cli.paths(), !cli.options.no_ignore, |path| {
         let decision = policy_cache.file_policy(&path);
+        if let Some(config_path) = &decision.nested_root_missing_utf8 {
+            if verbosity >= Verbosity::Verbose && warned_nested_roots.insert(config_path.clone()) {
+                eprintln!(
+                    "warning: {}: nested .editorconfig with `root = true` lacks `charset = utf-8` in a `[*]` section. Skipping",
+                    config_path.display()
+                );
+            }
+            found_violations = true;
+            return;
+        }
         if decision.skipped_non_utf8_sections && verbosity >= Verbosity::Verbose {
             eprintln!(
                 "warning: {}: skipped .editorconfig sections with non-utf-8 charset",

@@ -593,6 +593,32 @@ fn file_policy_skips_non_utf8_sections() {
 }
 
 #[test]
+fn file_policy_reports_nested_root_missing_utf8() {
+    let dir = TempDir::new().unwrap();
+    write_temp(
+        dir.path(),
+        ".editorconfig",
+        "root = true\n\n[*]\ncharset = utf-8\ntrim_trailing_whitespace = true\n",
+    );
+    let nested = dir.path().join("vendor");
+    fs::create_dir(&nested).unwrap();
+    write_temp(
+        &nested,
+        ".editorconfig",
+        "root = true\n\n[*.txt]\ntrim_trailing_whitespace = true\n",
+    );
+    let path = write_temp(&nested, "test.txt", "hello   ");
+
+    let mut cache = PolicyCache::new();
+    let policy = cache.file_policy(&path);
+
+    assert_eq!(
+        policy.nested_root_missing_utf8,
+        Some(nested.join(".editorconfig"))
+    );
+}
+
+#[test]
 fn root_config_status_requires_root_utf8_section() {
     let dir = TempDir::new().unwrap();
     write_temp(

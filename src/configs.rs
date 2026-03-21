@@ -55,10 +55,11 @@ struct ParsedEditorConfig {
 type CachedParsedConfig = Result<Option<Rc<ParsedEditorConfig>>, ()>;
 type CachedConfigStack = Result<Rc<[PathBuf]>, ()>;
 
-#[derive(Clone, Copy, Default)]
+#[derive(Clone, Default)]
 pub struct PolicyDecision {
     pub policy: FilePolicy,
     pub skipped_non_utf8_sections: bool,
+    pub nested_root_missing_utf8: Option<PathBuf>,
 }
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
@@ -88,17 +89,18 @@ impl PolicyCache {
     pub fn file_policy(&mut self, path: &Path) -> PolicyDecision {
         let normalized = self.normalize_target_path(path);
         if let Some(policy) = self.policies.get(&normalized) {
-            return *policy;
+            return policy.clone();
         }
 
         let decision = self.properties_for(&normalized).map_or_else(
             || PolicyDecision::default(),
-            |(props, skipped_non_utf8_sections)| PolicyDecision {
+            |(props, skipped_non_utf8_sections, nested_root_missing_utf8)| PolicyDecision {
                 policy: policy_from_properties(&props),
                 skipped_non_utf8_sections,
+                nested_root_missing_utf8,
             },
         );
-        self.policies.insert(normalized, decision);
+        self.policies.insert(normalized, decision.clone());
         decision
     }
 
@@ -140,13 +142,17 @@ impl PolicyCache {
         }
     }
 
-    fn properties_for(&mut self, path: &Path) -> Option<(Properties, bool)> {
+    fn properties_for(&mut self, path: &Path) -> Option<(Properties, bool, Option<PathBuf>)> {
         let mut props = Properties::new();
         let mut skipped_non_utf8_sections = false;
+        let mut nested_root_missing_utf8 = None;
         let dir = if path.is_dir() { path } else { path.parent()? };
 
         for config_path in self.config_stack_for_dir(dir).ok()?.iter() {
             let parsed = self.parsed_config(config_path).ok()??;
+            if parsed.is_root && !parsed.has_utf8_root_section {
+                nested_root_missing_utf8.get_or_insert_with(|| config_path.clone());
+            }
             let base = config_path.parent().unwrap_or(Path::new(""));
             let relative = path.strip_prefix(base).unwrap_or(path);
             for parsed_section in &parsed.sections {
@@ -161,7 +167,7 @@ impl PolicyCache {
             }
         }
 
-        Some((props, skipped_non_utf8_sections))
+        Some((props, skipped_non_utf8_sections, nested_root_missing_utf8))
     }
 
     fn config_stack_for_dir(&mut self, dir: &Path) -> CachedConfigStack {
