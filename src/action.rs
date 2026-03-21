@@ -189,27 +189,6 @@ pub enum FileStatus {
     InvalidUtf8,
 }
 
-#[derive(Clone, Copy)]
-struct ValidUtf8<'a>(&'a str);
-
-impl<'a> ValidUtf8<'a> {
-    fn new(bytes: &'a [u8]) -> Option<Self> {
-        std::str::from_utf8(bytes).ok().map(Self)
-    }
-
-    fn from_str(contents: &'a str) -> Self {
-        Self(contents)
-    }
-
-    fn as_bytes(self) -> &'a [u8] {
-        self.0.as_bytes()
-    }
-
-    fn is_empty(self) -> bool {
-        self.0.is_empty()
-    }
-}
-
 fn emit_violation<'a>(
     path: &'a Path,
     line: u64,
@@ -264,12 +243,12 @@ fn scan_lines_bytes(
 }
 
 fn scan_utf8_lines(
-    contents: ValidUtf8<'_>,
+    contents: &str,
     mut on_line: impl FnMut(u64, &str, Option<LineEnding>),
 ) -> ScanState {
     scan_lines_bytes(contents.as_bytes(), |line_number, text, ending| {
-        // `text` is a subslice of validated UTF-8 bytes, so it remains valid UTF-8.
-        let text = unsafe { std::str::from_utf8_unchecked(text) };
+        let text = std::str::from_utf8(text)
+            .expect("scan_utf8_lines only receives subslices of validated UTF-8");
         on_line(line_number, text, ending);
     })
 }
@@ -298,7 +277,7 @@ pub fn check_file_with<'a>(
     mut on_violation: impl FnMut(Violation<'a>),
 ) -> Result<FileStatus, Box<dyn std::error::Error>> {
     let contents = fs::read(path)?;
-    let Some(utf8_contents) = ValidUtf8::new(&contents) else {
+    let Ok(utf8_contents) = std::str::from_utf8(&contents) else {
         return Ok(FileStatus::InvalidUtf8);
     };
 
@@ -421,7 +400,7 @@ pub fn fix_file(path: &Path, policy: FilePolicy) -> Result<FileStatus, Box<dyn s
     let mut pending_empty_lines = Vec::new();
     let mut inferred_ending = None;
 
-    scan_utf8_lines(ValidUtf8::from_str(&contents), |_, text, ending| {
+    scan_utf8_lines(&contents, |_, text, ending| {
         let trimmed_text = if policy.trim_trailing_whitespace {
             text.trim_end_matches([' ', '\t'])
         } else {
