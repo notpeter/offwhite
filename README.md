@@ -176,6 +176,27 @@ files or (c) pass explicit files or directories at runtime.
 >   and support complex globbing syntax like `[**/tests/{output/*,*.out.txt}]`, `[*.[Pp][Yy]]`
 > - To match files non-recursively, use a leading slash in the `.editorconfig` section like `[/*.md]`
 
+## Intentional non-support
+
+Offwhite supports enforcing the following EditorConfig directives on UTF-8 files:
+
+- `insert_final_newline = true`
+- `trim_trailing_whitespace = true`
+- `end_of_line = lf`
+- `end_of_line = crlf`
+
+It ignores and does not check [other EditorConfig Properties](https://github.com/editorconfig/editorconfig/wiki/EditorConfig-Properties) like:
+
+```editorconfig
+charset = latin1
+indent_style = tab
+indent_size = 4
+tab_width = 4
+max_line_length = 100
+```
+
+This is intentional.
+
 ## Dependencies
 
 This project depends on the following crates:
