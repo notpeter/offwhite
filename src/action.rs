@@ -54,13 +54,6 @@ pub(crate) fn walk_paths(
         }
     }
 }
-
-#[derive(Clone)]
-struct ParsedLine {
-    text: String,
-    ending: Option<LineEnding>,
-}
-
 #[derive(Clone, Copy)]
 struct ScanState {
     total_lines: u64,
@@ -122,47 +115,22 @@ fn scan_lines(contents: &str, mut on_line: impl FnMut(u64, &str, Option<LineEndi
     state
 }
 
-fn parse_lines(contents: &str) -> Vec<ParsedLine> {
-    let mut lines = Vec::new();
-    scan_lines(contents, |_, text, ending| {
-        lines.push(ParsedLine {
-            text: text.to_string(),
-            ending,
-        });
-    });
-
-    lines
-}
-
-fn inferred_line_ending(lines: &[ParsedLine]) -> LineEnding {
-    lines
-        .iter()
-        .find_map(|line| line.ending)
-        .unwrap_or(LineEnding::Lf)
-}
-
-fn render_lines(lines: &[ParsedLine]) -> String {
-    let capacity = lines.iter().fold(0, |total, line| {
-        total
-            + line.text.len()
-            + match line.ending {
-                Some(LineEnding::Lf | LineEnding::Cr) => 1,
-                Some(LineEnding::CrLf) => 2,
-                None => 0,
-            }
-    });
-    let mut output = String::with_capacity(capacity);
-    for line in lines {
-        output.push_str(&line.text);
-        if let Some(ending) = line.ending {
-            output.push_str(match ending {
-                LineEnding::Lf => "\n",
-                LineEnding::CrLf => "\r\n",
-                LineEnding::Cr => "\r",
-            });
-        }
+fn line_ending_str(ending: LineEnding) -> &'static str {
+    match ending {
+        LineEnding::Lf => "\n",
+        LineEnding::CrLf => "\r\n",
+        LineEnding::Cr => "\r",
     }
-    output
+}
+
+fn flush_pending_empty_lines(
+    output: &mut String,
+    pending_empty_lines: &mut Vec<LineEnding>,
+    policy: FilePolicy,
+) {
+    for ending in pending_empty_lines.drain(..) {
+        output.push_str(line_ending_str(policy.end_of_line.unwrap_or(ending)));
+    }
 }
 
 fn emit_check_violations(
@@ -228,62 +196,56 @@ pub fn check_file_with(
 
 pub fn fix_file(path: &Path, policy: FilePolicy) -> Result<(), Box<dyn std::error::Error>> {
     let contents = fs::read_to_string(path)?;
-    let mut lines = parse_lines(&contents);
-    let mut changed = false;
+    let mut output = String::with_capacity(contents.len());
+    let mut pending_empty_lines = Vec::new();
+    let mut inferred_ending = None;
 
-    if policy.trim_trailing_whitespace {
-        for line in &mut lines {
-            let trimmed_len = line.text.trim_end_matches([' ', '\t']).len();
-            if trimmed_len != line.text.len() {
-                line.text.truncate(trimmed_len);
-                changed = true;
+    scan_lines(&contents, |_, text, ending| {
+        let trimmed_text = if policy.trim_trailing_whitespace {
+            text.trim_end_matches([' ', '\t'])
+        } else {
+            text
+        };
+
+        if let Some(found) = ending {
+            inferred_ending.get_or_insert(found);
+        }
+
+        if let Some(found) = ending {
+            if trimmed_text.is_empty() {
+                pending_empty_lines.push(found);
+                return;
             }
         }
-    }
 
-    if policy.single_final_newline {
-        // Remove trailing empty lines to enforce exactly one final newline.
-        while lines
-            .last()
-            .is_some_and(|line| line.ending.is_some() && line.text.is_empty())
-        {
-            lines.pop();
-            changed = true;
+        flush_pending_empty_lines(&mut output, &mut pending_empty_lines, policy);
+        output.push_str(trimmed_text);
+        if let Some(found) = ending {
+            output.push_str(line_ending_str(policy.end_of_line.unwrap_or(found)));
+        }
+    });
+
+    if !pending_empty_lines.is_empty() && !policy.single_final_newline {
+        if !(output.is_empty() && pending_empty_lines.len() == 1) {
+            flush_pending_empty_lines(&mut output, &mut pending_empty_lines, policy);
         }
     }
 
-    if matches!(lines.as_slice(), [ParsedLine { text, .. }] if text.is_empty()) {
-        lines.clear();
-        changed = true;
+    if policy.insert_final_newline
+        && !output.is_empty()
+        && !output.ends_with('\n')
+        && !output.ends_with('\r')
+    {
+        output.push_str(line_ending_str(
+            policy
+                .end_of_line
+                .unwrap_or(inferred_ending.unwrap_or(LineEnding::Lf)),
+        ));
     }
 
-    let inferred = inferred_line_ending(&lines);
-    let target_ending = policy.end_of_line.unwrap_or(inferred);
-
-    if policy.end_of_line.is_some() {
-        for line in &mut lines {
-            if line.ending.is_some() && line.ending != Some(target_ending) {
-                line.ending = Some(target_ending);
-                changed = true;
-            }
-        }
-    }
-
-    // Ensure exactly one final newline (unless file is empty).
-    if policy.insert_final_newline && !lines.is_empty() {
-        if let Some(last) = lines.last_mut() {
-            if last.ending != Some(target_ending) {
-                last.ending = Some(target_ending);
-                changed = true;
-            }
-        }
-    }
-
-    if !changed {
+    if output == contents {
         return Ok(());
     }
-
-    let output = render_lines(&lines);
     fs::write(path, output)?;
     Ok(())
 }
