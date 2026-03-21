@@ -204,6 +204,10 @@ impl<'a> ValidUtf8<'a> {
     fn as_bytes(self) -> &'a [u8] {
         self.0.as_bytes()
     }
+
+    fn is_empty(self) -> bool {
+        self.0.is_empty()
+    }
 }
 
 fn emit_violation<'a>(
@@ -321,7 +325,7 @@ pub fn check_file_with<'a>(
     });
 
     if policy.insert_final_newline {
-        if !utf8_contents.0.is_empty() {
+        if !utf8_contents.is_empty() {
             if !state.last_line_ended {
                 emit_violation(
                     path,
