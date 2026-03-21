@@ -3,7 +3,11 @@ use std::path::Path;
 use tempfile::TempDir;
 
 use crate::{
-    action::normalize_cli_pattern, check_file, configs::FilePolicy, fix_file,
+    Verbosity,
+    action::{normalize_cli_pattern, resolve_paths},
+    check_file,
+    configs::{FilePolicy, LineEnding},
+    display_violations, fix_file,
     violation::ViolationKind,
 };
 
@@ -11,36 +15,49 @@ const ALL_CHECKS: FilePolicy = FilePolicy {
     trim_trailing_whitespace: true,
     insert_final_newline: true,
     single_final_newline: false,
+    end_of_line: None,
 };
 
 const ALL_CHECKS_SINGLE: FilePolicy = FilePolicy {
     trim_trailing_whitespace: true,
     insert_final_newline: true,
     single_final_newline: true,
+    end_of_line: None,
 };
 
 const TRIM_ONLY: FilePolicy = FilePolicy {
     trim_trailing_whitespace: true,
     insert_final_newline: false,
     single_final_newline: false,
+    end_of_line: None,
 };
 
 const NEWLINE_ONLY: FilePolicy = FilePolicy {
     trim_trailing_whitespace: false,
     insert_final_newline: true,
     single_final_newline: false,
+    end_of_line: None,
 };
 
 const NEWLINE_ONLY_SINGLE: FilePolicy = FilePolicy {
     trim_trailing_whitespace: false,
     insert_final_newline: true,
     single_final_newline: true,
+    end_of_line: None,
 };
 
 const NO_CHECKS: FilePolicy = FilePolicy {
     trim_trailing_whitespace: false,
     insert_final_newline: false,
     single_final_newline: false,
+    end_of_line: None,
+};
+
+const CRLF_ONLY: FilePolicy = FilePolicy {
+    trim_trailing_whitespace: false,
+    insert_final_newline: false,
+    single_final_newline: false,
+    end_of_line: Some(LineEnding::CrLf),
 };
 
 fn write_temp(dir: &Path, name: &str, contents: &str) -> std::path::PathBuf {
@@ -49,6 +66,9 @@ fn write_temp(dir: &Path, name: &str, contents: &str) -> std::path::PathBuf {
     path
 }
 
+fn read_temp(path: &Path) -> String {
+    fs::read_to_string(path).unwrap()
+}
 #[test]
 fn normalize_cli_pattern_strips_leading_dot_slash() {
     assert_eq!(normalize_cli_pattern("./*.md"), "*.md");
@@ -61,6 +81,49 @@ fn normalize_cli_pattern_leaves_other_inputs_unchanged() {
     assert_eq!(normalize_cli_pattern("../*.md"), "../*.md");
 }
 
+#[test]
+fn resolve_paths_includes_files_from_directory_argument() {
+    let dir = TempDir::new().unwrap();
+    write_temp(dir.path(), ".editorconfig", "root = true\n");
+    let subdir = dir.path().join("src");
+    fs::create_dir(&subdir).unwrap();
+    let file = write_temp(&subdir, "main.rs", "fn main() {}\n");
+
+    let files = resolve_paths(&[subdir.display().to_string()], true);
+
+    assert_eq!(files, vec![file]);
+}
+
+#[test]
+fn resolve_paths_directory_argument_still_applies_default_ignores() {
+    let dir = TempDir::new().unwrap();
+    write_temp(dir.path(), ".editorconfig", "root = true\n");
+    let subdir = dir.path().join("assets");
+    fs::create_dir(&subdir).unwrap();
+    let png = write_temp(&subdir, "image.png", "not really a png");
+
+    let files = resolve_paths(&[subdir.display().to_string()], true);
+
+    assert!(!files.contains(&png));
+}
+
+#[test]
+fn resolve_paths_directory_argument_respects_ignore_files() {
+    let dir = TempDir::new().unwrap();
+    write_temp(dir.path(), ".editorconfig", "root = true\n");
+    write_temp(dir.path(), ".ignore", "target/\n");
+    let target = dir.path().join("target");
+    fs::create_dir(&target).unwrap();
+    let ignored = write_temp(&target, "generated.txt", "ignored");
+    let src = dir.path().join("src");
+    fs::create_dir(&src).unwrap();
+    let kept = write_temp(&src, "main.rs", "fn main() {}\n");
+
+    let files = resolve_paths(&[dir.path().display().to_string()], true);
+
+    assert!(files.contains(&kept));
+    assert!(!files.contains(&ignored));
+}
 // --- check_file tests ---
 
 #[test]
@@ -199,6 +262,82 @@ fn check_newline_only_ignores_whitespace() {
     assert!(matches!(violations[0].kind, ViolationKind::NoFinalNewline));
 }
 
+#[test]
+fn check_end_of_line_reports_mismatches() {
+    let dir = TempDir::new().unwrap();
+    let path = write_temp(dir.path(), "f.rs", "hello\nworld\r\n");
+    let violations = check_file(&path, CRLF_ONLY).unwrap();
+    assert_eq!(violations.len(), 1);
+    assert!(matches!(
+        violations[0].kind,
+        ViolationKind::IncorrectLineEnding {
+            expected: LineEnding::CrLf,
+            found: LineEnding::Lf
+        }
+    ));
+    assert_eq!(violations[0].line, 1);
+}
+
+#[test]
+fn display_violations_collapses_line_ending_mismatches_by_default() {
+    let dir = TempDir::new().unwrap();
+    let path = write_temp(dir.path(), "f.rs", "hello\nworld\n");
+    let violations = check_file(&path, CRLF_ONLY).unwrap();
+
+    let displayed = display_violations(violations, Verbosity::Normal);
+
+    assert_eq!(displayed.len(), 1);
+    assert!(matches!(
+        displayed[0].kind,
+        ViolationKind::IncorrectLineEnding { .. }
+    ));
+    assert_eq!(displayed[0].line, 1);
+}
+
+#[test]
+fn display_violations_keeps_all_line_ending_mismatches_in_verbose_mode() {
+    let dir = TempDir::new().unwrap();
+    let path = write_temp(dir.path(), "f.rs", "hello\nworld\n");
+    let violations = check_file(&path, CRLF_ONLY).unwrap();
+
+    let displayed = display_violations(violations, Verbosity::Verbose);
+
+    assert_eq!(displayed.len(), 2);
+    assert!(matches!(
+        displayed[0].kind,
+        ViolationKind::IncorrectLineEnding { .. }
+    ));
+    assert!(matches!(
+        displayed[1].kind,
+        ViolationKind::IncorrectLineEnding { .. }
+    ));
+}
+
+#[test]
+fn display_violations_preserves_other_violation_kinds() {
+    let dir = TempDir::new().unwrap();
+    let path = write_temp(dir.path(), "f.rs", "hello \nworld");
+    let policy = FilePolicy {
+        trim_trailing_whitespace: true,
+        insert_final_newline: true,
+        single_final_newline: false,
+        end_of_line: Some(LineEnding::CrLf),
+    };
+
+    let displayed = display_violations(check_file(&path, policy).unwrap(), Verbosity::Normal);
+
+    assert_eq!(displayed.len(), 3);
+    assert!(matches!(
+        displayed[0].kind,
+        ViolationKind::TrailingWhitespace
+    ));
+    assert!(matches!(
+        displayed[1].kind,
+        ViolationKind::IncorrectLineEnding { .. }
+    ));
+    assert!(matches!(displayed[2].kind, ViolationKind::NoFinalNewline));
+}
+
 // --- fix_file tests ---
 
 #[test]
@@ -323,18 +462,49 @@ fn fix_newline_only_single_strips_extra() {
     assert_eq!(fs::read_to_string(&path).unwrap(), "hello   \n");
 }
 
+#[test]
+fn fix_end_of_line_converts_existing_newlines() {
+    let dir = TempDir::new().unwrap();
+    let path = write_temp(dir.path(), "f.rs", "hello\nworld\n");
+    fix_file(&path, CRLF_ONLY).unwrap();
+    assert_eq!(read_temp(&path), "hello\r\nworld\r\n");
+}
+
+#[test]
+fn fix_end_of_line_uses_configured_newline_for_inserted_final_newline() {
+    let dir = TempDir::new().unwrap();
+    let path = write_temp(dir.path(), "f.rs", "hello");
+    let policy = FilePolicy {
+        trim_trailing_whitespace: false,
+        insert_final_newline: true,
+        single_final_newline: false,
+        end_of_line: Some(LineEnding::CrLf),
+    };
+    fix_file(&path, policy).unwrap();
+    assert_eq!(read_temp(&path), "hello\r\n");
+}
+
+#[test]
+fn fix_without_end_of_line_preserves_existing_crlf() {
+    let dir = TempDir::new().unwrap();
+    let path = write_temp(dir.path(), "f.rs", "hello  \r\nworld\t\r\n");
+    fix_file(&path, TRIM_ONLY).unwrap();
+    assert_eq!(read_temp(&path), "hello\r\nworld\r\n");
+}
+
 // --- editorconfig integration test ---
 
 #[test]
 fn file_policy_reads_editorconfig() {
     let dir = TempDir::new().unwrap();
-    let ec = "root = true\n\n[*]\ntrim_trailing_whitespace = true\ninsert_final_newline = true\n";
+    let ec = "root = true\n\n[*]\ntrim_trailing_whitespace = true\ninsert_final_newline = true\nend_of_line = crlf\n";
     write_temp(dir.path(), ".editorconfig", ec);
     let path = write_temp(dir.path(), "test.rs", "hello   ");
 
     let policy = crate::file_policy(&path);
     assert!(policy.trim_trailing_whitespace);
     assert!(policy.insert_final_newline);
+    assert_eq!(policy.end_of_line, Some(LineEnding::CrLf));
 }
 
 #[test]
@@ -358,6 +528,7 @@ fn file_policy_respects_glob_sections() {
     let txt_policy = crate::file_policy(&txt_path);
     assert!(!txt_policy.trim_trailing_whitespace);
     assert!(!txt_policy.insert_final_newline);
+    assert_eq!(txt_policy.end_of_line, None);
 }
 
 #[test]
@@ -371,6 +542,7 @@ fn file_policy_defaults_to_off() {
     let policy = crate::file_policy(&path);
     assert!(!policy.trim_trailing_whitespace);
     assert!(!policy.insert_final_newline);
+    assert_eq!(policy.end_of_line, None);
 }
 
 // --- no-op when both policies are off ---

@@ -1,15 +1,23 @@
 use std::path::PathBuf;
 
+use crate::configs::LineEnding;
+
+#[derive(Clone)]
 pub struct Violation {
     pub path: PathBuf,
     pub line: u64,
     pub kind: ViolationKind,
 }
 
+#[derive(Clone)]
 pub enum ViolationKind {
     TrailingWhitespace,
     NoFinalNewline,
     ExtraFinalNewlines,
+    IncorrectLineEnding {
+        expected: LineEnding,
+        found: LineEnding,
+    },
 }
 
 impl std::fmt::Display for Violation {
@@ -25,6 +33,14 @@ impl std::fmt::Display for Violation {
             }
             ViolationKind::ExtraFinalNewlines => {
                 write!(f, "{path}:{line}: multiple trailing newlines")
+            }
+            ViolationKind::IncorrectLineEnding { expected, found } => {
+                write!(
+                    f,
+                    "{path}:{line}: incorrect line ending: expected {}, found {}",
+                    expected.as_str(),
+                    found.as_str()
+                )
             }
         }
     }
