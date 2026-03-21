@@ -1,10 +1,10 @@
-use std::path::PathBuf;
+use std::path::Path;
 
 use crate::configs::LineEnding;
 
 #[derive(Clone)]
-pub struct Violation {
-    pub path: PathBuf,
+pub struct Violation<'a> {
+    pub path: &'a Path,
     pub line: u64,
     pub kind: ViolationKind,
 }
@@ -20,7 +20,7 @@ pub enum ViolationKind {
     },
 }
 
-impl std::fmt::Display for Violation {
+impl std::fmt::Display for Violation<'_> {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         let path = self.path.display();
         let line = self.line;

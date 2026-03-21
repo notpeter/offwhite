@@ -80,6 +80,15 @@ pub enum FileStatus {
     InvalidUtf8,
 }
 
+fn emit_violation<'a>(
+    path: &'a Path,
+    line: u64,
+    kind: ViolationKind,
+    on_violation: &mut impl FnMut(Violation<'a>),
+) {
+    on_violation(Violation { path, line, kind });
+}
+
 fn scan_lines(contents: &str, mut on_line: impl FnMut(u64, &str, Option<LineEnding>)) -> ScanState {
     scan_lines_bytes(contents.as_bytes(), |line_number, text, ending| {
         let text = std::str::from_utf8(text).expect("validated UTF-8");
@@ -149,10 +158,10 @@ fn flush_pending_empty_lines(
     }
 }
 
-pub fn check_file_with(
-    path: &Path,
+pub fn check_file_with<'a>(
+    path: &'a Path,
     policy: FilePolicy,
-    mut on_violation: impl FnMut(Violation),
+    mut on_violation: impl FnMut(Violation<'a>),
 ) -> Result<FileStatus, Box<dyn std::error::Error>> {
     let contents = fs::read(path)?;
     let Ok(utf8_contents) = std::str::from_utf8(&contents) else {
@@ -161,20 +170,22 @@ pub fn check_file_with(
 
     let state = scan_lines_bytes(&contents, |line_number, text, ending| {
         if policy.trim_trailing_whitespace && (text.ends_with(b" ") || text.ends_with(b"\t")) {
-            on_violation(Violation {
-                path: path.to_owned(),
-                line: line_number,
-                kind: ViolationKind::TrailingWhitespace,
-            });
+            emit_violation(
+                path,
+                line_number,
+                ViolationKind::TrailingWhitespace,
+                &mut on_violation,
+            );
         }
 
         if let (Some(expected), Some(found)) = (policy.end_of_line, ending) {
             if found != expected {
-                on_violation(Violation {
-                    path: path.to_owned(),
-                    line: line_number,
-                    kind: ViolationKind::IncorrectLineEnding { expected, found },
-                });
+                emit_violation(
+                    path,
+                    line_number,
+                    ViolationKind::IncorrectLineEnding { expected, found },
+                    &mut on_violation,
+                );
             }
         }
     });
@@ -182,20 +193,22 @@ pub fn check_file_with(
     if policy.insert_final_newline {
         if !utf8_contents.is_empty() {
             if !state.last_line_ended {
-                on_violation(Violation {
-                    path: path.to_owned(),
-                    line: state.total_lines,
-                    kind: ViolationKind::NoFinalNewline,
-                });
+                emit_violation(
+                    path,
+                    state.total_lines,
+                    ViolationKind::NoFinalNewline,
+                    &mut on_violation,
+                );
             } else if policy.single_final_newline
                 && state.previous_line_ended
                 && state.last_line_empty
             {
-                on_violation(Violation {
-                    path: path.to_owned(),
-                    line: state.total_lines,
-                    kind: ViolationKind::ExtraFinalNewlines,
-                });
+                emit_violation(
+                    path,
+                    state.total_lines,
+                    ViolationKind::ExtraFinalNewlines,
+                    &mut on_violation,
+                );
             }
         }
     }
@@ -203,11 +216,73 @@ pub fn check_file_with(
     Ok(FileStatus::Processed)
 }
 
+fn fix_would_change(contents: &[u8], policy: FilePolicy) -> bool {
+    let mut pending_empty_lines = 0_usize;
+    let mut output_is_empty = true;
+    let mut output_ends_with_newline = false;
+    let mut changed = false;
+
+    scan_lines_bytes(contents, |_, text, ending| {
+        if policy.trim_trailing_whitespace && (text.ends_with(b" ") || text.ends_with(b"\t")) {
+            changed = true;
+        }
+
+        if let (Some(expected), Some(found)) = (policy.end_of_line, ending) {
+            if found != expected {
+                changed = true;
+            }
+        }
+
+        let trimmed_is_empty = if policy.trim_trailing_whitespace {
+            text.iter().all(|byte| matches!(byte, b' ' | b'\t'))
+        } else {
+            text.is_empty()
+        };
+
+        if ending.is_some() && trimmed_is_empty {
+            pending_empty_lines += 1;
+            return;
+        }
+
+        if pending_empty_lines > 0 {
+            output_is_empty = false;
+            output_ends_with_newline = true;
+            pending_empty_lines = 0;
+        }
+
+        if !text.is_empty() || ending.is_some() {
+            output_is_empty = false;
+        }
+        output_ends_with_newline = ending.is_some();
+    });
+
+    if pending_empty_lines > 0 {
+        if policy.single_final_newline {
+            changed = true;
+        } else if output_is_empty && pending_empty_lines == 1 {
+            changed = true;
+        } else {
+            output_is_empty = false;
+            output_ends_with_newline = true;
+        }
+    }
+
+    if policy.insert_final_newline && !output_is_empty && !output_ends_with_newline {
+        changed = true;
+    }
+
+    changed
+}
+
 pub fn fix_file(path: &Path, policy: FilePolicy) -> Result<FileStatus, Box<dyn std::error::Error>> {
     let contents = fs::read(path)?;
     let Ok(contents) = String::from_utf8(contents) else {
         return Ok(FileStatus::InvalidUtf8);
     };
+    if !fix_would_change(contents.as_bytes(), policy) {
+        return Ok(FileStatus::Processed);
+    }
+
     let mut output = String::with_capacity(contents.len());
     let mut pending_empty_lines = Vec::new();
     let mut inferred_ending = None;
@@ -253,10 +328,6 @@ pub fn fix_file(path: &Path, policy: FilePolicy) -> Result<FileStatus, Box<dyn s
                 .end_of_line
                 .unwrap_or(inferred_ending.unwrap_or(LineEnding::Lf)),
         ));
-    }
-
-    if output == contents {
-        return Ok(FileStatus::Processed);
     }
     fs::write(path, output)?;
     Ok(FileStatus::Processed)

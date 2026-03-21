@@ -53,7 +53,14 @@ struct ParsedEditorConfig {
 }
 
 type CachedParsedConfig = Result<Option<Rc<ParsedEditorConfig>>, ()>;
-type CachedConfigStack = Result<Rc<[PathBuf]>, ()>;
+
+#[derive(Clone)]
+struct ConfigStack {
+    parent: Option<Rc<ConfigStack>>,
+    config_path: PathBuf,
+}
+
+type CachedConfigStack = Result<Option<Rc<ConfigStack>>, ()>;
 
 #[derive(Clone, Default)]
 pub struct PolicyDecision {
@@ -114,12 +121,14 @@ impl PolicyCache {
             return RootConfigStatus::Missing;
         };
 
-        let Ok(stack) = self.config_stack_for_dir(&dir) else {
+        let Ok(Some(stack)) = self.config_stack_for_dir(&dir) else {
             return RootConfigStatus::Missing;
         };
 
-        for config_path in stack.iter() {
-            let Ok(Some(parsed)) = self.parsed_config(config_path) else {
+        let mut current = Some(stack);
+        while let Some(node) = current {
+            let Ok(Some(parsed)) = self.parsed_config(&node.config_path) else {
+                current = node.parent.clone();
                 continue;
             };
             if parsed.is_root {
@@ -129,6 +138,7 @@ impl PolicyCache {
                     RootConfigStatus::MissingUtf8
                 };
             }
+            current = node.parent.clone();
         }
 
         RootConfigStatus::Missing
@@ -147,27 +157,56 @@ impl PolicyCache {
         let mut skipped_non_utf8_sections = false;
         let mut nested_root_missing_utf8 = None;
         let dir = if path.is_dir() { path } else { path.parent()? };
+        let stack = self.config_stack_for_dir(dir).ok()??;
 
-        for config_path in self.config_stack_for_dir(dir).ok()?.iter() {
-            let parsed = self.parsed_config(config_path).ok()??;
-            if parsed.is_root && !parsed.has_utf8_root_section {
-                nested_root_missing_utf8.get_or_insert_with(|| config_path.clone());
-            }
-            let base = config_path.parent().unwrap_or(Path::new(""));
-            let relative = path.strip_prefix(base).unwrap_or(path);
-            for parsed_section in &parsed.sections {
-                if !parsed_section.section.applies_to(relative) {
-                    continue;
-                }
-                if parsed_section.charset == SectionCharset::Other {
-                    skipped_non_utf8_sections = true;
-                    continue;
-                }
-                let _ = parsed_section.section.apply_to(&mut props, relative);
-            }
-        }
+        self.apply_config_stack(
+            &stack,
+            path,
+            &mut props,
+            &mut skipped_non_utf8_sections,
+            &mut nested_root_missing_utf8,
+        );
 
         Some((props, skipped_non_utf8_sections, nested_root_missing_utf8))
+    }
+
+    fn apply_config_stack(
+        &mut self,
+        stack: &ConfigStack,
+        path: &Path,
+        props: &mut Properties,
+        skipped_non_utf8_sections: &mut bool,
+        nested_root_missing_utf8: &mut Option<PathBuf>,
+    ) {
+        if let Some(parent) = stack.parent.as_deref() {
+            self.apply_config_stack(
+                parent,
+                path,
+                props,
+                skipped_non_utf8_sections,
+                nested_root_missing_utf8,
+            );
+        }
+
+        let Ok(Some(parsed)) = self.parsed_config(&stack.config_path) else {
+            return;
+        };
+        if parsed.is_root && !parsed.has_utf8_root_section {
+            nested_root_missing_utf8.get_or_insert_with(|| stack.config_path.clone());
+        }
+
+        let base = stack.config_path.parent().unwrap_or(Path::new(""));
+        let relative = path.strip_prefix(base).unwrap_or(path);
+        for parsed_section in &parsed.sections {
+            if !parsed_section.section.applies_to(relative) {
+                continue;
+            }
+            if parsed_section.charset == SectionCharset::Other {
+                *skipped_non_utf8_sections = true;
+                continue;
+            }
+            let _ = parsed_section.section.apply_to(props, relative);
+        }
     }
 
     fn config_stack_for_dir(&mut self, dir: &Path) -> CachedConfigStack {
@@ -175,22 +214,23 @@ impl PolicyCache {
             return cached.clone();
         }
 
-        let mut stack: Vec<PathBuf> = dir
+        let parent_stack = dir
             .parent()
             .map(|parent| self.config_stack_for_dir(parent))
             .transpose()?
-            .map(|paths| paths.iter().cloned().collect())
-            .unwrap_or_default();
+            .flatten();
 
         let config_path = dir.join(".editorconfig");
-        if let Some(parsed) = self.parsed_config(&config_path)? {
-            if parsed.is_root {
-                stack.clear();
-            }
-            stack.push(config_path);
-        }
+        let stack = if let Some(parsed) = self.parsed_config(&config_path)? {
+            Some(Rc::new(ConfigStack {
+                parent: if parsed.is_root { None } else { parent_stack },
+                config_path,
+            }))
+        } else {
+            parent_stack
+        };
 
-        let cached = Ok(Rc::<[PathBuf]>::from(stack));
+        let cached = Ok(stack);
         self.directory_configs
             .insert(dir.to_path_buf(), cached.clone());
         cached

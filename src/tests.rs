@@ -77,7 +77,7 @@ fn collect_walked_paths(paths: &[String], respect_ignore_files: bool) -> Vec<std
 fn check_file(
     path: &Path,
     policy: FilePolicy,
-) -> Result<Vec<crate::violation::Violation>, Box<dyn std::error::Error>> {
+) -> Result<Vec<crate::violation::Violation<'_>>, Box<dyn std::error::Error>> {
     let mut violations = Vec::new();
     let status = check_file_with(path, policy, |violation| violations.push(violation))?;
     assert_eq!(status, FileStatus::Processed);
