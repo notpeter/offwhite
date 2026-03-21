@@ -1,6 +1,7 @@
 use std::{
     collections::HashMap,
     path::{Path, PathBuf},
+    rc::Rc,
 };
 
 use ec4rs::{Properties, PropertiesSource, Section, glob::Glob};
@@ -37,10 +38,13 @@ struct ParsedEditorConfig {
     sections: Vec<Section<Glob>>,
 }
 
+type CachedParsedConfig = Result<Option<Rc<ParsedEditorConfig>>, ()>;
+type CachedConfigStack = Result<Rc<[PathBuf]>, ()>;
+
 pub struct PolicyCache {
     cwd: PathBuf,
-    parsed_configs: HashMap<PathBuf, Result<Option<ParsedEditorConfig>, ()>>,
-    directory_configs: HashMap<PathBuf, Result<Vec<PathBuf>, ()>>,
+    parsed_configs: HashMap<PathBuf, CachedParsedConfig>,
+    directory_configs: HashMap<PathBuf, CachedConfigStack>,
     policies: HashMap<PathBuf, FilePolicy>,
 }
 
@@ -79,7 +83,7 @@ impl PolicyCache {
         };
 
         self.config_stack_for_dir(&dir)
-            .is_some_and(|stack| !stack.is_empty())
+            .is_ok_and(|stack| !stack.is_empty())
     }
 
     fn normalize_target_path(&self, path: &Path) -> PathBuf {
@@ -94,8 +98,8 @@ impl PolicyCache {
         let mut props = Properties::new();
         let dir = if path.is_dir() { path } else { path.parent()? };
 
-        for config_path in self.config_stack_for_dir(dir)? {
-            let parsed = self.parsed_config(&config_path).ok()??;
+        for config_path in self.config_stack_for_dir(dir).ok()?.iter() {
+            let parsed = self.parsed_config(config_path).ok()??;
             let base = config_path.parent().unwrap_or(Path::new(""));
             let relative = path.strip_prefix(base).unwrap_or(path);
             for section in &parsed.sections {
@@ -106,30 +110,33 @@ impl PolicyCache {
         Some(props)
     }
 
-    fn config_stack_for_dir(&mut self, dir: &Path) -> Option<Vec<PathBuf>> {
+    fn config_stack_for_dir(&mut self, dir: &Path) -> CachedConfigStack {
         if let Some(cached) = self.directory_configs.get(dir) {
-            return cached.clone().ok();
+            return cached.clone();
         }
 
-        let mut stack = dir
+        let mut stack: Vec<PathBuf> = dir
             .parent()
-            .and_then(|parent| self.config_stack_for_dir(parent))
+            .map(|parent| self.config_stack_for_dir(parent))
+            .transpose()?
+            .map(|paths| paths.iter().cloned().collect())
             .unwrap_or_default();
 
         let config_path = dir.join(".editorconfig");
-        if let Some(parsed) = self.parsed_config(&config_path).ok()? {
+        if let Some(parsed) = self.parsed_config(&config_path)? {
             if parsed.is_root {
                 stack.clear();
             }
             stack.push(config_path);
         }
 
+        let cached = Ok(Rc::<[PathBuf]>::from(stack));
         self.directory_configs
-            .insert(dir.to_path_buf(), Ok(stack.clone()));
-        Some(stack)
+            .insert(dir.to_path_buf(), cached.clone());
+        cached
     }
 
-    fn parsed_config(&mut self, path: &Path) -> Result<Option<ParsedEditorConfig>, ()> {
+    fn parsed_config(&mut self, path: &Path) -> CachedParsedConfig {
         if let Some(cached) = self.parsed_configs.get(path) {
             return cached.clone();
         }
@@ -147,7 +154,7 @@ impl PolicyCache {
                             Err(_) => return self.cache_parsed_config(path, Err(())),
                         }
                     }
-                    Ok(Some(ParsedEditorConfig { is_root, sections }))
+                    Ok(Some(Rc::new(ParsedEditorConfig { is_root, sections })))
                 }
                 Err(_) => Err(()),
             }
@@ -159,8 +166,8 @@ impl PolicyCache {
     fn cache_parsed_config(
         &mut self,
         path: &Path,
-        parsed: Result<Option<ParsedEditorConfig>, ()>,
-    ) -> Result<Option<ParsedEditorConfig>, ()> {
+        parsed: CachedParsedConfig,
+    ) -> CachedParsedConfig {
         self.parsed_configs
             .insert(path.to_path_buf(), parsed.clone());
         parsed
