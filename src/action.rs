@@ -104,14 +104,6 @@ fn inferred_line_ending(lines: &[ParsedLine]) -> LineEnding {
         .unwrap_or(LineEnding::Lf)
 }
 
-fn has_extra_final_newlines(lines: &[ParsedLine]) -> bool {
-    matches!(
-        lines,
-        [.., ParsedLine { ending: Some(_), .. }, ParsedLine { text, ending: Some(_), .. }]
-            if text.is_empty()
-    )
-}
-
 fn render_lines(lines: &[ParsedLine]) -> String {
     let mut output = String::new();
     for line in lines {
@@ -127,50 +119,99 @@ fn render_lines(lines: &[ParsedLine]) -> String {
     output
 }
 
+fn push_check_violations(
+    violations: &mut Vec<Violation>,
+    path: &Path,
+    line_number: u64,
+    text: &str,
+    ending: Option<LineEnding>,
+    policy: FilePolicy,
+) {
+    if policy.trim_trailing_whitespace && text.ends_with([' ', '\t']) {
+        violations.push(Violation {
+            path: path.to_owned(),
+            line: line_number,
+            kind: ViolationKind::TrailingWhitespace,
+        });
+    }
+
+    if let (Some(expected), Some(found)) = (policy.end_of_line, ending) {
+        if found != expected {
+            violations.push(Violation {
+                path: path.to_owned(),
+                line: line_number,
+                kind: ViolationKind::IncorrectLineEnding { expected, found },
+            });
+        }
+    }
+}
+
 pub fn check_file(
     path: &Path,
     policy: FilePolicy,
 ) -> Result<Vec<Violation>, Box<dyn std::error::Error>> {
-    let mut violations = Vec::new();
     let contents = fs::read_to_string(path)?;
-    let lines = parse_lines(&contents);
+    let mut violations = Vec::new();
+    let bytes = contents.as_bytes();
+    let mut start = 0;
+    let mut i = 0;
+    let mut line_number = 1_u64;
+    let mut total_lines = 0_u64;
+    let mut previous_line_ended = false;
+    let mut last_line_ended = false;
+    let mut last_line_empty = false;
 
-    if policy.trim_trailing_whitespace {
-        for (idx, line) in lines.iter().enumerate() {
-            if line.text.ends_with([' ', '\t']) {
-                violations.push(Violation {
-                    path: path.to_owned(),
-                    line: idx as u64 + 1,
-                    kind: ViolationKind::TrailingWhitespace,
-                });
-            }
+    while i < bytes.len() {
+        let ending = match bytes[i] {
+            b'\n' => Some((LineEnding::Lf, 1)),
+            b'\r' if i + 1 < bytes.len() && bytes[i + 1] == b'\n' => Some((LineEnding::CrLf, 2)),
+            b'\r' => Some((LineEnding::Cr, 1)),
+            _ => None,
+        };
+
+        if let Some((line_ending, width)) = ending {
+            let text = &contents[start..i];
+            push_check_violations(
+                &mut violations,
+                path,
+                line_number,
+                text,
+                Some(line_ending),
+                policy,
+            );
+            previous_line_ended = last_line_ended;
+            last_line_ended = true;
+            last_line_empty = text.is_empty();
+            total_lines += 1;
+            line_number += 1;
+            i += width;
+            start = i;
+        } else {
+            i += 1;
         }
     }
 
-    if let Some(expected) = policy.end_of_line {
-        for (idx, line) in lines.iter().enumerate() {
-            if let Some(found) = line.ending.filter(|found| *found != expected) {
-                violations.push(Violation {
-                    path: path.to_owned(),
-                    line: idx as u64 + 1,
-                    kind: ViolationKind::IncorrectLineEnding { expected, found },
-                });
-            }
-        }
+    if start < contents.len() {
+        let text = &contents[start..];
+        push_check_violations(&mut violations, path, line_number, text, None, policy);
+        previous_line_ended = last_line_ended;
+        last_line_ended = false;
+        last_line_empty = text.is_empty();
+        total_lines += 1;
     }
 
     if policy.insert_final_newline {
         if !contents.is_empty() {
-            if lines.last().is_some_and(|line| line.ending.is_none()) {
+            if !last_line_ended {
                 violations.push(Violation {
                     path: path.to_owned(),
-                    line: lines.len() as u64,
+                    line: total_lines,
                     kind: ViolationKind::NoFinalNewline,
                 });
-            } else if policy.single_final_newline && has_extra_final_newlines(&lines) {
+            } else if policy.single_final_newline && previous_line_ended && last_line_empty {
                 violations.push(Violation {
                     path: path.to_owned(),
-                    line: lines.len() as u64,
+                    line: total_lines,
                     kind: ViolationKind::ExtraFinalNewlines,
                 });
             }

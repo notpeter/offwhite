@@ -266,7 +266,7 @@ fn display_violations_collapses_line_ending_mismatches_by_default() {
     let path = write_temp(dir.path(), "f.rs", "hello\nworld\n");
     let violations = check_file(&path, CRLF_ONLY).unwrap();
 
-    let displayed = display_violations(violations, Verbosity::Normal);
+    let displayed = display_violations(&violations, Verbosity::Normal);
 
     assert_eq!(displayed.len(), 1);
     assert!(matches!(
@@ -282,7 +282,7 @@ fn display_violations_keeps_all_line_ending_mismatches_in_verbose_mode() {
     let path = write_temp(dir.path(), "f.rs", "hello\nworld\n");
     let violations = check_file(&path, CRLF_ONLY).unwrap();
 
-    let displayed = display_violations(violations, Verbosity::Verbose);
+    let displayed = display_violations(&violations, Verbosity::Verbose);
 
     assert_eq!(displayed.len(), 2);
     assert!(matches!(
@@ -306,7 +306,8 @@ fn display_violations_preserves_other_violation_kinds() {
         end_of_line: Some(LineEnding::CrLf),
     };
 
-    let displayed = display_violations(check_file(&path, policy).unwrap(), Verbosity::Normal);
+    let violations = check_file(&path, policy).unwrap();
+    let displayed = display_violations(&violations, Verbosity::Normal);
 
     assert_eq!(displayed.len(), 3);
     assert!(matches!(

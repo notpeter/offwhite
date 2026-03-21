@@ -211,12 +211,12 @@ where
     }
 }
 
-pub(crate) fn display_violations(
-    violations: Vec<Violation>,
+pub(crate) fn display_violations<'a>(
+    violations: &'a [Violation],
     verbosity: Verbosity,
-) -> Vec<Violation> {
+) -> Vec<&'a Violation> {
     if verbosity >= Verbosity::Verbose {
-        return violations;
+        return violations.iter().collect();
     }
 
     let mut displayed = Vec::with_capacity(violations.len());
@@ -290,8 +290,8 @@ fn main() -> ExitCode {
             }
             Action::Check => match check_file(&path, policy) {
                 Ok(violations) => {
-                    let displayed = display_violations(violations.clone(), verbosity);
-                    for v in &displayed {
+                    let displayed = display_violations(&violations, verbosity);
+                    for v in displayed {
                         println!("{v}");
                     }
                     if !violations.is_empty() {
