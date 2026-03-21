@@ -229,11 +229,15 @@ pub fn check_file_with(
 pub fn fix_file(path: &Path, policy: FilePolicy) -> Result<(), Box<dyn std::error::Error>> {
     let contents = fs::read_to_string(path)?;
     let mut lines = parse_lines(&contents);
+    let mut changed = false;
 
     if policy.trim_trailing_whitespace {
         for line in &mut lines {
-            line.text
-                .truncate(line.text.trim_end_matches([' ', '\t']).len());
+            let trimmed_len = line.text.trim_end_matches([' ', '\t']).len();
+            if trimmed_len != line.text.len() {
+                line.text.truncate(trimmed_len);
+                changed = true;
+            }
         }
     }
 
@@ -244,11 +248,13 @@ pub fn fix_file(path: &Path, policy: FilePolicy) -> Result<(), Box<dyn std::erro
             .is_some_and(|line| line.ending.is_some() && line.text.is_empty())
         {
             lines.pop();
+            changed = true;
         }
     }
 
     if matches!(lines.as_slice(), [ParsedLine { text, .. }] if text.is_empty()) {
         lines.clear();
+        changed = true;
     }
 
     let inferred = inferred_line_ending(&lines);
@@ -256,8 +262,9 @@ pub fn fix_file(path: &Path, policy: FilePolicy) -> Result<(), Box<dyn std::erro
 
     if policy.end_of_line.is_some() {
         for line in &mut lines {
-            if line.ending.is_some() {
+            if line.ending.is_some() && line.ending != Some(target_ending) {
                 line.ending = Some(target_ending);
+                changed = true;
             }
         }
     }
@@ -265,8 +272,15 @@ pub fn fix_file(path: &Path, policy: FilePolicy) -> Result<(), Box<dyn std::erro
     // Ensure exactly one final newline (unless file is empty).
     if policy.insert_final_newline && !lines.is_empty() {
         if let Some(last) = lines.last_mut() {
-            last.ending = Some(target_ending);
+            if last.ending != Some(target_ending) {
+                last.ending = Some(target_ending);
+                changed = true;
+            }
         }
+    }
+
+    if !changed {
+        return Ok(());
     }
 
     let output = render_lines(&lines);

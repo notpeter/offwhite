@@ -412,6 +412,23 @@ fn fix_clean_file_unchanged() {
     assert_eq!(fs::read_to_string(&path).unwrap(), "hello\nworld\n");
 }
 
+#[test]
+fn fix_clean_readonly_file_skips_write() {
+    let dir = TempDir::new().unwrap();
+    let path = write_temp(dir.path(), "clean.rs", "hello\nworld\n");
+    let mut permissions = fs::metadata(&path).unwrap().permissions();
+    permissions.set_readonly(true);
+    fs::set_permissions(&path, permissions.clone()).unwrap();
+
+    let result = fix_file(&path, ALL_CHECKS);
+
+    permissions.set_readonly(false);
+    fs::set_permissions(&path, permissions).unwrap();
+
+    assert!(result.is_ok());
+    assert_eq!(fs::read_to_string(&path).unwrap(), "hello\nworld\n");
+}
+
 // --- policy-selective fix tests ---
 
 #[test]
