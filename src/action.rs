@@ -1,9 +1,11 @@
+use std::collections::HashSet;
 use std::fs;
 use std::path::{Path, PathBuf};
 
 use crate::configs::{FilePolicy, LineEnding};
 use crate::ignores::build_default_ignores;
 use crate::violation::{Violation, ViolationKind};
+use crate::{Action, PolicyCache, Verbosity};
 
 use ignore::WalkBuilder;
 
@@ -51,6 +53,113 @@ pub(crate) fn walk_paths(
             walk_dir(&path, respect_ignore_files, &mut on_file);
         } else {
             eprintln!("{}: no such file or directory", path.display());
+        }
+    }
+}
+
+pub(crate) struct RunState {
+    pub found_violations: bool,
+    warned_nested_roots: HashSet<PathBuf>,
+}
+
+impl RunState {
+    pub(crate) fn new() -> Self {
+        Self {
+            found_violations: false,
+            warned_nested_roots: HashSet::new(),
+        }
+    }
+
+    fn mark_violation(&mut self) {
+        self.found_violations = true;
+    }
+}
+
+pub(crate) fn process_file(
+    path: &Path,
+    action: Action,
+    verbosity: Verbosity,
+    single_final_newline: bool,
+    policy_cache: &mut PolicyCache,
+    run_state: &mut RunState,
+) {
+    let decision = policy_cache.file_policy(path);
+    if let Some(config_path) = &decision.nested_root_missing_utf8 {
+        if verbosity >= Verbosity::Verbose
+            && run_state.warned_nested_roots.insert(config_path.clone())
+        {
+            eprintln!(
+                "warning: {}: nested .editorconfig with `root = true` lacks `charset = utf-8` in a `[*]` section. Skipping",
+                config_path.display()
+            );
+        }
+        run_state.mark_violation();
+        return;
+    }
+
+    if decision.skipped_non_utf8_sections && verbosity >= Verbosity::Verbose {
+        eprintln!(
+            "warning: {}: skipped .editorconfig sections with non-utf-8 charset",
+            path.display()
+        );
+    }
+
+    let mut policy = decision.policy;
+    policy.single_final_newline = single_final_newline;
+    if !policy.trim_trailing_whitespace
+        && !policy.insert_final_newline
+        && policy.end_of_line.is_none()
+    {
+        return;
+    }
+
+    match action {
+        Action::Fix => process_fix(path, policy, verbosity, run_state),
+        Action::Check => process_check(path, policy, verbosity, run_state),
+        Action::Init | Action::InitIgnoreRevs => unreachable!(),
+    }
+}
+
+fn process_fix(path: &Path, policy: FilePolicy, verbosity: Verbosity, run_state: &mut RunState) {
+    match fix_file(path, policy) {
+        Ok(FileStatus::Processed) => {}
+        Ok(FileStatus::InvalidUtf8) => {
+            if verbosity >= Verbosity::Normal {
+                eprintln!("warning: {}: invalid UTF-8; skipped", path.display());
+            }
+            run_state.mark_violation();
+        }
+        Err(e) => {
+            eprintln!("{}: error fixing: {e}", path.display());
+            run_state.mark_violation();
+        }
+    }
+}
+
+fn process_check(path: &Path, policy: FilePolicy, verbosity: Verbosity, run_state: &mut RunState) {
+    let mut saw_line_ending_mismatch = false;
+    match check_file_with(path, policy, |violation| {
+        run_state.mark_violation();
+        match violation.kind {
+            ViolationKind::IncorrectLineEnding { .. } if verbosity < Verbosity::Verbose => {
+                if !saw_line_ending_mismatch {
+                    saw_line_ending_mismatch = true;
+                    println!("{violation}");
+                }
+            }
+            _ => println!("{violation}"),
+        }
+    }) {
+        Ok(FileStatus::Processed) => {}
+        Ok(FileStatus::InvalidUtf8) => {
+            if verbosity >= Verbosity::Normal {
+                eprintln!("warning: {}: invalid UTF-8; skipped", path.display());
+            }
+            run_state.mark_violation();
+        }
+        Err(e) => {
+            eprintln!("{}: error: {e}", path.display());
+            run_state.mark_violation();
         }
     }
 }

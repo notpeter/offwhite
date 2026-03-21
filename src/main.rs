@@ -7,14 +7,12 @@ mod violation;
 #[cfg(test)]
 mod tests;
 
-use std::collections::HashSet;
 use std::path::PathBuf;
 use std::process::ExitCode;
 
-use crate::action::{FileStatus, check_file_with, fix_file, walk_paths};
+use crate::action::{RunState, process_file, walk_paths};
 use crate::configs::{PolicyCache, RootConfigStatus};
 use crate::inits::{init_editorconfig, init_ignore_revs};
-use crate::violation::ViolationKind;
 
 use clap::{Args, Parser, Subcommand};
 
@@ -256,84 +254,19 @@ fn main() -> ExitCode {
         }
     }
 
-    let mut found_violations = false;
-    let mut warned_nested_roots = HashSet::new();
+    let mut run_state = RunState::new();
     walk_paths(cli.paths(), !cli.options.no_ignore, |path| {
-        let decision = policy_cache.file_policy(&path);
-        if let Some(config_path) = &decision.nested_root_missing_utf8 {
-            if verbosity >= Verbosity::Verbose && warned_nested_roots.insert(config_path.clone()) {
-                eprintln!(
-                    "warning: {}: nested .editorconfig with `root = true` lacks `charset = utf-8` in a `[*]` section. Skipping",
-                    config_path.display()
-                );
-            }
-            found_violations = true;
-            return;
-        }
-        if decision.skipped_non_utf8_sections && verbosity >= Verbosity::Verbose {
-            eprintln!(
-                "warning: {}: skipped .editorconfig sections with non-utf-8 charset",
-                path.display()
-            );
-        }
-
-        let mut policy = decision.policy;
-        policy.single_final_newline = cli.options.single_final_newline;
-        if !policy.trim_trailing_whitespace
-            && !policy.insert_final_newline
-            && policy.end_of_line.is_none()
-        {
-            return;
-        }
-
-        match action {
-            Action::Fix => match fix_file(&path, policy) {
-                Ok(FileStatus::Processed) => {}
-                Ok(FileStatus::InvalidUtf8) => {
-                    if verbosity >= Verbosity::Normal {
-                        eprintln!("warning: {}: invalid UTF-8; skipped", path.display());
-                    }
-                    found_violations = true;
-                }
-                Err(e) => {
-                    eprintln!("{}: error fixing: {e}", path.display());
-                    found_violations = true;
-                }
-            },
-            Action::Check => {
-                let mut saw_line_ending_mismatch = false;
-                match check_file_with(&path, policy, |violation| {
-                    found_violations = true;
-                    match violation.kind {
-                        ViolationKind::IncorrectLineEnding { .. }
-                            if verbosity < Verbosity::Verbose =>
-                        {
-                            if !saw_line_ending_mismatch {
-                                saw_line_ending_mismatch = true;
-                                println!("{violation}");
-                            }
-                        }
-                        _ => println!("{violation}"),
-                    }
-                }) {
-                    Ok(FileStatus::Processed) => {}
-                    Ok(FileStatus::InvalidUtf8) => {
-                        if verbosity >= Verbosity::Normal {
-                            eprintln!("warning: {}: invalid UTF-8; skipped", path.display());
-                        }
-                        found_violations = true;
-                    }
-                    Err(e) => {
-                        eprintln!("{}: error: {e}", path.display());
-                        found_violations = true;
-                    }
-                }
-            }
-            Action::Init | Action::InitIgnoreRevs => unreachable!(),
-        }
+        process_file(
+            &path,
+            action,
+            verbosity,
+            cli.options.single_final_newline,
+            &mut policy_cache,
+            &mut run_state,
+        );
     });
 
-    if found_violations {
+    if run_state.found_violations {
         ExitCode::FAILURE
     } else {
         ExitCode::SUCCESS

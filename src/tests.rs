@@ -3,9 +3,8 @@ use std::path::Path;
 use tempfile::TempDir;
 
 use crate::{
-    action::{FileStatus, check_file_with, walk_paths},
+    action::{FileStatus, check_file_with, fix_file, walk_paths},
     configs::{FilePolicy, LineEnding, PolicyCache, RootConfigStatus},
-    fix_file,
     violation::ViolationKind,
 };
 
