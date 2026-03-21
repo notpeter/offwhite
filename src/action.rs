@@ -23,7 +23,10 @@ fn walk_dir(
         .hidden(false);
     builder.filter_entry(move |entry| {
         !default_ignores
-            .matched(entry.path(), entry.file_type().is_some_and(|ft| ft.is_dir()))
+            .matched(
+                entry.path(),
+                entry.file_type().is_some_and(|ft| ft.is_dir()),
+            )
             .is_ignore()
     });
 

@@ -3,13 +3,12 @@ use std::path::Path;
 use tempfile::TempDir;
 
 use crate::{
+    Verbosity,
     action::{normalize_cli_pattern, resolve_paths},
     check_file,
     configs::{FilePolicy, LineEnding},
-    display_violations,
-    fix_file,
+    display_violations, fix_file,
     violation::ViolationKind,
-    Verbosity,
 };
 
 const ALL_CHECKS: FilePolicy = FilePolicy {
