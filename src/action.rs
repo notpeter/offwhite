@@ -80,6 +80,23 @@ pub enum FileStatus {
     InvalidUtf8,
 }
 
+#[derive(Clone, Copy)]
+struct ValidUtf8<'a>(&'a str);
+
+impl<'a> ValidUtf8<'a> {
+    fn new(bytes: &'a [u8]) -> Option<Self> {
+        std::str::from_utf8(bytes).ok().map(Self)
+    }
+
+    fn from_str(contents: &'a str) -> Self {
+        Self(contents)
+    }
+
+    fn as_bytes(self) -> &'a [u8] {
+        self.0.as_bytes()
+    }
+}
+
 fn emit_violation<'a>(
     path: &'a Path,
     line: u64,
@@ -87,13 +104,6 @@ fn emit_violation<'a>(
     on_violation: &mut impl FnMut(Violation<'a>),
 ) {
     on_violation(Violation { path, line, kind });
-}
-
-fn scan_lines(contents: &str, mut on_line: impl FnMut(u64, &str, Option<LineEnding>)) -> ScanState {
-    scan_lines_bytes(contents.as_bytes(), |line_number, text, ending| {
-        let text = std::str::from_utf8(text).expect("validated UTF-8");
-        on_line(line_number, text, ending);
-    })
 }
 
 fn scan_lines_bytes(
@@ -140,6 +150,17 @@ fn scan_lines_bytes(
     state
 }
 
+fn scan_utf8_lines(
+    contents: ValidUtf8<'_>,
+    mut on_line: impl FnMut(u64, &str, Option<LineEnding>),
+) -> ScanState {
+    scan_lines_bytes(contents.as_bytes(), |line_number, text, ending| {
+        // `text` is a subslice of validated UTF-8 bytes, so it remains valid UTF-8.
+        let text = unsafe { std::str::from_utf8_unchecked(text) };
+        on_line(line_number, text, ending);
+    })
+}
+
 fn line_ending_str(ending: LineEnding) -> &'static str {
     match ending {
         LineEnding::Lf => "\n",
@@ -164,7 +185,7 @@ pub fn check_file_with<'a>(
     mut on_violation: impl FnMut(Violation<'a>),
 ) -> Result<FileStatus, Box<dyn std::error::Error>> {
     let contents = fs::read(path)?;
-    let Ok(utf8_contents) = std::str::from_utf8(&contents) else {
+    let Some(utf8_contents) = ValidUtf8::new(&contents) else {
         return Ok(FileStatus::InvalidUtf8);
     };
 
@@ -191,7 +212,7 @@ pub fn check_file_with<'a>(
     });
 
     if policy.insert_final_newline {
-        if !utf8_contents.is_empty() {
+        if !utf8_contents.0.is_empty() {
             if !state.last_line_ended {
                 emit_violation(
                     path,
@@ -287,7 +308,7 @@ pub fn fix_file(path: &Path, policy: FilePolicy) -> Result<FileStatus, Box<dyn s
     let mut pending_empty_lines = Vec::new();
     let mut inferred_ending = None;
 
-    scan_lines(&contents, |_, text, ending| {
+    scan_utf8_lines(ValidUtf8::from_str(&contents), |_, text, ending| {
         let trimmed_text = if policy.trim_trailing_whitespace {
             text.trim_end_matches([' ', '\t'])
         } else {
