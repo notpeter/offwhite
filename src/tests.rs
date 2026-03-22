@@ -123,6 +123,31 @@ fn walk_paths_directory_argument_still_applies_default_ignores() {
 }
 
 #[test]
+fn walk_paths_directory_argument_still_applies_default_lockfile_ignores() {
+    let dir = TempDir::new().unwrap();
+    write_temp(dir.path(), ".editorconfig", "root = true\n");
+    let subdir = dir.path().join("project");
+    fs::create_dir(&subdir).unwrap();
+    let cargo_lock = write_temp(&subdir, "Cargo.lock", "");
+    let package_lock = write_temp(&subdir, "package.lock.json", "");
+    let go_sum = write_temp(&subdir, "go.sum", "");
+    let package_resolved = write_temp(&subdir, "Package.resolved", "");
+    let pnpm_lock = write_temp(&subdir, "pnpm.lock.yaml", "");
+    let yarn_lock = write_temp(&subdir, "yarn.lock.yml", "");
+    let source = write_temp(&subdir, "main.rs", "fn main() {}\n");
+
+    let files = collect_walked_paths(&[subdir.display().to_string()], true);
+
+    assert!(files.contains(&source));
+    assert!(!files.contains(&cargo_lock));
+    assert!(!files.contains(&package_lock));
+    assert!(!files.contains(&go_sum));
+    assert!(!files.contains(&package_resolved));
+    assert!(!files.contains(&pnpm_lock));
+    assert!(!files.contains(&yarn_lock));
+}
+
+#[test]
 fn walk_paths_directory_argument_respects_ignore_files() {
     let dir = TempDir::new().unwrap();
     write_temp(dir.path(), ".editorconfig", "root = true\n");

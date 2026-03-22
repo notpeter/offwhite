@@ -117,13 +117,30 @@ pub const DEFAULT_GLOBS: &[&str] = &[
     "!*.swo",
     "!*.DS_Store",
     "!*.snap",
+    // Lockfiles
+    "!*.lock",
+    "!*.lock.json",
+    "!go.sum",
+    "!Package.resolved",
+    "!*.lock.yaml",
+    "!*.lock.yml",
     "!*.min.js",
     "!*.min.css",
     "!*.map",
     "!*.provisionprofile",
     // License
-    "!licen[cs]e*",
-    "!copying*",
+    "!licen[cs]e{,.txt,.md,.rst}",
+    "!licen[cs]es{,.txt,.md,.rst}",
+    "!licen[cs]e-mit{,.txt,.md,.rst}",
+    "!licen[cs]e-apache{,.txt,.md,.rst}",
+    "!licen[cs]e-gpl{,.txt,.md,.rst}",
+    "!licen[cs]e-2.0{,.txt,.md,.rst}",
+    "!copying{,.txt,.md,.lesser}*",
+    "!copyright{,.txt,.md}*",
+    "!{eupl,gpl,lgpl,agpl,mit,apache-2.0,bsd,mpl,epl,cddl,isc,cc-by,cc-by-sa,cc0}.txt",
+    "!unlicense{,.txt,.md}",
+    "!notice{,.txt,.md}",
+    "!copyright{,.txt,.md}",
     "!OFL.txt", // LOL line 21 has trailing whitespace
 ];
 

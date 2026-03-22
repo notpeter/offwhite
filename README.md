@@ -90,6 +90,7 @@ Additionally, `offwhite` bundles an ignore list which by-default excludes:
 
 - Source control directories: `.git/`, `.svn/`, `.hg/`
 - License files: `license*`, `COPYING`, etc
+- Lockfiles: `*.lock`, `*.lock.json`, `*.lock.{yaml,yml}`, `go.sum`, etc
 - Patch files: `*.patch`, `*.diff`, `*.rej`, `*.patchset`.
 - extensions likely to contain binary content (`*.png`, `*.exe`, `*.jpg`, etc).
 - See: [src/ignores.rs](src/ignores.rs) for a full list
