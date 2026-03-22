@@ -1,15 +1,21 @@
 use std::collections::HashSet;
 use std::fs;
+use std::io;
 use std::path::{Path, PathBuf};
 
 use crate::args::{Action, Verbosity};
 use crate::configs::{FilePolicy, LineEnding, PolicyCache};
 use crate::ignores::build_default_ignores;
+use crate::output::{is_broken_pipe, write_stdout};
 use crate::violation::{Violation, ViolationKind};
 
 use ignore::WalkBuilder;
 
-fn walk_dir(dir: &Path, respect_ignore_files: bool, mut on_file: impl FnMut(PathBuf)) {
+fn walk_dir(
+    dir: &Path,
+    respect_ignore_files: bool,
+    mut on_file: impl FnMut(PathBuf) -> io::Result<()>,
+) -> io::Result<()> {
     let mut builder = WalkBuilder::new(dir);
     let default_ignores = build_default_ignores(dir);
     builder
@@ -32,29 +38,33 @@ fn walk_dir(dir: &Path, respect_ignore_files: bool, mut on_file: impl FnMut(Path
     for entry in walker {
         match entry {
             Ok(e) if e.file_type().is_some_and(|ft| ft.is_file()) => {
-                on_file(e.into_path());
+                on_file(e.into_path())?;
             }
             Err(e) => eprintln!("walk error: {e}"),
             _ => {}
         }
     }
+
+    Ok(())
 }
 
 pub(crate) fn walk_paths(
     paths: &[String],
     respect_ignore_files: bool,
-    mut on_file: impl FnMut(PathBuf),
-) {
+    mut on_file: impl FnMut(PathBuf) -> io::Result<()>,
+) -> io::Result<()> {
     for path in paths {
         let path = PathBuf::from(path);
         if path.is_file() {
-            on_file(path);
+            on_file(path)?;
         } else if path.is_dir() {
-            walk_dir(&path, respect_ignore_files, &mut on_file);
+            walk_dir(&path, respect_ignore_files, &mut on_file)?;
         } else {
             eprintln!("{}: no such file or directory", path.display());
         }
     }
+
+    Ok(())
 }
 
 pub(crate) struct RunState {
@@ -82,7 +92,7 @@ pub(crate) fn process_file(
     single_final_newline: bool,
     policy_cache: &mut PolicyCache,
     run_state: &mut RunState,
-) {
+) -> io::Result<()> {
     let decision = policy_cache.file_policy(path);
     if let Some(config_path) = &decision.nested_root_missing_utf8 {
         if verbosity >= Verbosity::Verbose
@@ -94,7 +104,7 @@ pub(crate) fn process_file(
             );
         }
         run_state.mark_violation();
-        return;
+        return Ok(());
     }
 
     if decision.skipped_non_utf8_sections && verbosity >= Verbosity::Verbose {
@@ -110,14 +120,16 @@ pub(crate) fn process_file(
         && !policy.insert_final_newline
         && policy.end_of_line.is_none()
     {
-        return;
+        return Ok(());
     }
 
     match action {
         Action::Fix => process_fix(path, policy, verbosity, run_state),
-        Action::Check => process_check(path, policy, verbosity, run_state),
+        Action::Check => process_check(path, policy, verbosity, run_state)?,
         Action::Init | Action::InitIgnoreRevs => unreachable!(),
     }
+
+    Ok(())
 }
 
 fn process_fix(path: &Path, policy: FilePolicy, verbosity: Verbosity, run_state: &mut RunState) {
@@ -136,7 +148,12 @@ fn process_fix(path: &Path, policy: FilePolicy, verbosity: Verbosity, run_state:
     }
 }
 
-fn process_check(path: &Path, policy: FilePolicy, verbosity: Verbosity, run_state: &mut RunState) {
+fn process_check(
+    path: &Path,
+    policy: FilePolicy,
+    verbosity: Verbosity,
+    run_state: &mut RunState,
+) -> io::Result<()> {
     let mut saw_line_ending_mismatch = false;
     match check_file_with(path, policy, |violation| {
         run_state.mark_violation();
@@ -144,10 +161,12 @@ fn process_check(path: &Path, policy: FilePolicy, verbosity: Verbosity, run_stat
             ViolationKind::IncorrectLineEnding { .. } if verbosity < Verbosity::Verbose => {
                 if !saw_line_ending_mismatch {
                     saw_line_ending_mismatch = true;
-                    println!("{violation}");
+                    write_stdout(format_args!("{violation}\n"))
+                } else {
+                    Ok(())
                 }
             }
-            _ => println!("{violation}"),
+            _ => write_stdout(format_args!("{violation}\n")),
         }
     }) {
         Ok(FileStatus::Processed) => {}
@@ -157,11 +176,14 @@ fn process_check(path: &Path, policy: FilePolicy, verbosity: Verbosity, run_stat
             }
             run_state.mark_violation();
         }
+        Err(e) if is_broken_pipe(&e) => return Err(e),
         Err(e) => {
             eprintln!("{}: error: {e}", path.display());
             run_state.mark_violation();
         }
     }
+
+    Ok(())
 }
 
 #[derive(Clone, Copy)]
@@ -193,9 +215,9 @@ fn emit_violation<'a>(
     path: &'a Path,
     line: u64,
     kind: ViolationKind,
-    on_violation: &mut impl FnMut(Violation<'a>),
-) {
-    on_violation(Violation { path, line, kind });
+    on_violation: &mut impl FnMut(Violation<'a>) -> io::Result<()>,
+) -> io::Result<()> {
+    on_violation(Violation { path, line, kind })
 }
 
 fn scan_lines_bytes(
@@ -274,34 +296,48 @@ fn flush_pending_empty_lines(
 pub fn check_file_with<'a>(
     path: &'a Path,
     policy: FilePolicy,
-    mut on_violation: impl FnMut(Violation<'a>),
-) -> Result<FileStatus, Box<dyn std::error::Error>> {
+    mut on_violation: impl FnMut(Violation<'a>) -> io::Result<()>,
+) -> io::Result<FileStatus> {
     let contents = fs::read(path)?;
     let Ok(utf8_contents) = std::str::from_utf8(&contents) else {
         return Ok(FileStatus::InvalidUtf8);
     };
 
+    let mut violation_error = None;
     let state = scan_lines_bytes(&contents, |line_number, text, ending| {
+        if violation_error.is_some() {
+            return;
+        }
+
         if policy.trim_trailing_whitespace && (text.ends_with(b" ") || text.ends_with(b"\t")) {
-            emit_violation(
+            if let Err(err) = emit_violation(
                 path,
                 line_number,
                 ViolationKind::TrailingWhitespace,
                 &mut on_violation,
-            );
+            ) {
+                violation_error = Some(err);
+                return;
+            }
         }
 
         if let (Some(expected), Some(found)) = (policy.end_of_line, ending) {
             if found != expected {
-                emit_violation(
+                if let Err(err) = emit_violation(
                     path,
                     line_number,
                     ViolationKind::IncorrectLineEnding { expected, found },
                     &mut on_violation,
-                );
+                ) {
+                    violation_error = Some(err);
+                }
             }
         }
     });
+
+    if let Some(err) = violation_error {
+        return Err(err);
+    }
 
     if policy.insert_final_newline {
         if !utf8_contents.is_empty() {
@@ -311,7 +347,7 @@ pub fn check_file_with<'a>(
                     state.total_lines,
                     ViolationKind::NoFinalNewline,
                     &mut on_violation,
-                );
+                )?;
             } else if policy.single_final_newline
                 && state.previous_line_ended
                 && state.last_line_empty
@@ -321,7 +357,7 @@ pub fn check_file_with<'a>(
                     state.total_lines,
                     ViolationKind::ExtraFinalNewlines,
                     &mut on_violation,
-                );
+                )?;
             }
         }
     }

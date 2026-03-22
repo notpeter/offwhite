@@ -69,16 +69,23 @@ fn read_temp(path: &Path) -> String {
 
 fn collect_walked_paths(paths: &[String], respect_ignore_files: bool) -> Vec<std::path::PathBuf> {
     let mut files = Vec::new();
-    walk_paths(paths, respect_ignore_files, |path| files.push(path));
+    walk_paths(paths, respect_ignore_files, |path| {
+        files.push(path);
+        Ok(())
+    })
+    .unwrap();
     files
 }
 
 fn check_file(
     path: &Path,
     policy: FilePolicy,
-) -> Result<Vec<crate::violation::Violation<'_>>, Box<dyn std::error::Error>> {
+) -> std::io::Result<Vec<crate::violation::Violation<'_>>> {
     let mut violations = Vec::new();
-    let status = check_file_with(path, policy, |violation| violations.push(violation))?;
+    let status = check_file_with(path, policy, |violation| {
+        violations.push(violation);
+        Ok(())
+    })?;
     assert_eq!(status, FileStatus::Processed);
     Ok(violations)
 }
@@ -159,6 +166,7 @@ fn check_file_with_streams_violations_in_order() {
 
     check_file_with(&path, ALL_CHECKS, |violation| {
         seen.push((violation.line, violation.kind));
+        Ok(())
     })
     .unwrap();
 
@@ -174,7 +182,11 @@ fn check_file_with_invalid_utf8_returns_warning_status() {
     fs::write(&path, [0x66, 0x6f, 0x80, 0x0a]).unwrap();
     let mut seen = Vec::new();
 
-    let status = check_file_with(&path, ALL_CHECKS, |violation| seen.push(violation)).unwrap();
+    let status = check_file_with(&path, ALL_CHECKS, |violation| {
+        seen.push(violation);
+        Ok(())
+    })
+    .unwrap();
 
     assert_eq!(status, FileStatus::InvalidUtf8);
     assert!(seen.is_empty());
@@ -321,7 +333,11 @@ fn check_end_of_line_stream_reports_all_mismatches() {
     let path = write_temp(dir.path(), "f.rs", "hello\nworld\n");
     let mut seen = Vec::new();
 
-    check_file_with(&path, CRLF_ONLY, |violation| seen.push(violation)).unwrap();
+    check_file_with(&path, CRLF_ONLY, |violation| {
+        seen.push(violation);
+        Ok(())
+    })
+    .unwrap();
 
     assert_eq!(seen.len(), 2);
     assert!(matches!(

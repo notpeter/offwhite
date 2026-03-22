@@ -3,6 +3,7 @@ mod args;
 mod configs;
 mod ignores;
 mod inits;
+mod output;
 mod violation;
 
 #[cfg(test)]
@@ -15,27 +16,39 @@ use crate::action::{RunState, process_file, walk_paths};
 use crate::args::{Action, CliOutcome, Verbosity, parse_cli};
 use crate::configs::{PolicyCache, RootConfigStatus};
 use crate::inits::{init_editorconfig, init_ignore_revs};
+use crate::output::is_broken_pipe;
 
 fn main() -> ExitCode {
+    match run() {
+        Ok(code) => code,
+        Err(err) if is_broken_pipe(&err) => ExitCode::SUCCESS,
+        Err(err) => {
+            eprintln!("error: failed writing to stdout: {err}");
+            ExitCode::FAILURE
+        }
+    }
+}
+
+fn run() -> std::io::Result<ExitCode> {
     let cli = match parse_cli() {
         CliOutcome::Run(cli) => cli,
-        CliOutcome::Exit(code) => return code,
+        CliOutcome::Exit(code) => return Ok(code),
     };
     let action = cli.action();
 
     match action {
         Action::Init => {
             return if init_editorconfig() {
-                ExitCode::SUCCESS
+                Ok(ExitCode::SUCCESS)
             } else {
-                ExitCode::FAILURE
+                Ok(ExitCode::FAILURE)
             };
         }
         Action::InitIgnoreRevs => {
             return if init_ignore_revs() {
-                ExitCode::SUCCESS
+                Ok(ExitCode::SUCCESS)
             } else {
-                ExitCode::FAILURE
+                Ok(ExitCode::FAILURE)
             };
         }
         Action::Check | Action::Fix => {}
@@ -51,7 +64,7 @@ fn main() -> ExitCode {
             if verbosity >= Verbosity::Normal {
                 eprintln!("warning: no root .editorconfig file found; nothing checked");
             }
-            return ExitCode::FAILURE;
+            return Ok(ExitCode::FAILURE);
         }
         RootConfigStatus::MissingUtf8 => {
             if verbosity >= Verbosity::Normal {
@@ -59,7 +72,7 @@ fn main() -> ExitCode {
                     "warning: root .editorconfig must contain `charset = utf-8` in a `[*]` section; nothing checked"
                 );
             }
-            return ExitCode::FAILURE;
+            return Ok(ExitCode::FAILURE);
         }
     }
 
@@ -72,12 +85,12 @@ fn main() -> ExitCode {
             cli.single_final_newline(),
             &mut policy_cache,
             &mut run_state,
-        );
-    });
+        )
+    })?;
 
-    if run_state.found_violations {
+    Ok(if run_state.found_violations {
         ExitCode::FAILURE
     } else {
         ExitCode::SUCCESS
-    }
+    })
 }
