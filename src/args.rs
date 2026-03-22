@@ -7,10 +7,12 @@ const ROOT_HELP_TEMPLATE: &str = concat!(
     "Offwhite enforces .editconfig whitespace and newline settings\n",
     "\n",
     "Usage:\n",
-    "  offwhite check [OPTIONS] [PATHS]...       Check for violations\n",
-    "  offwhite fix [OPTIONS] [PATHS]...         Fix files in place\n",
-    "  offwhite init editorconfig                Create an example .editorconfig\n",
-    "  offwhite init ignore-revs                 Create an example .git-blame-ignore-revs\n",
+    "  offwhite check              Check for violations\n",
+    "  offwhite fix                Fix files in place\n",
+    "  offwhite list editorconfig  List and validate .editorconfig files\n",
+    "  offwhite list extensions    Summarize file extensions in the tree\n",
+    "  offwhite init editorconfig  Create an example .editorconfig\n",
+    "  offwhite init ignore-revs   Create an example .git-blame-ignore-revs\n",
     "\n",
     "Options:\n",
     "  -q, --quiet                 Suppress warnings\n",
@@ -32,6 +34,8 @@ pub enum Verbosity {
 pub(crate) enum Action {
     InitEditorconfig,
     InitIgnoreRevs,
+    ListEditorconfig,
+    ListExtensions,
     #[default]
     Check,
     Fix,
@@ -42,6 +46,7 @@ impl Action {
         match self {
             Self::Check => "check",
             Self::Fix => "fix",
+            Self::ListEditorconfig | Self::ListExtensions => "list",
             Self::InitEditorconfig | Self::InitIgnoreRevs => "init",
         }
     }
@@ -107,21 +112,40 @@ fn parse_cli_args(args: Vec<OsString>) -> Result<Cli, clap::Error> {
     let (command, subcommand) = matches
         .subcommand()
         .expect("default action normalization should always provide a subcommand");
-    let action = match command {
-        "check" => Action::Check,
-        "fix" => Action::Fix,
-        "init" => match subcommand.subcommand_name() {
-            Some("editorconfig") => Action::InitEditorconfig,
-            Some("ignore-revs") => Action::InitIgnoreRevs,
-            _ => unreachable!("configured init subcommand should map to Action"),
-        },
+    let (action, action_matches) = match command {
+        "check" => (Action::Check, subcommand),
+        "fix" => (Action::Fix, subcommand),
+        "list" => {
+            let (subcommand_name, list_matches) = subcommand
+                .subcommand()
+                .expect("configured list command should require a subcommand");
+            let action = match subcommand_name {
+                "editorconfig" => Action::ListEditorconfig,
+                "extensions" => Action::ListExtensions,
+                _ => unreachable!("configured list subcommand should map to Action"),
+            };
+            (action, list_matches)
+        }
+        "init" => {
+            let (subcommand_name, init_matches) = subcommand
+                .subcommand()
+                .expect("configured init command should require a subcommand");
+            let action = match subcommand_name {
+                "editorconfig" => Action::InitEditorconfig,
+                "ignore-revs" => Action::InitIgnoreRevs,
+                _ => unreachable!("configured init subcommand should map to Action"),
+            };
+            (action, init_matches)
+        }
         _ => unreachable!("configured subcommand should map to Action"),
     };
     let paths = match action {
-        Action::Check | Action::Fix => subcommand
-            .get_many::<String>("paths")
-            .map(|paths| paths.cloned().collect())
-            .unwrap_or_else(|| vec![".".into()]),
+        Action::Check | Action::Fix | Action::ListEditorconfig | Action::ListExtensions => {
+            action_matches
+                .get_many::<String>("paths")
+                .map(|paths| paths.cloned().collect())
+                .unwrap_or_else(|| vec![".".into()])
+        }
         Action::InitEditorconfig | Action::InitIgnoreRevs => Vec::new(),
     };
 
@@ -176,6 +200,20 @@ fn build_cli() -> Command {
         .subcommand(scan_command("check", "Check for violations"))
         .subcommand(scan_command("fix", "Fix files in place"))
         .subcommand(
+            Command::new("list")
+                .about("List repository metadata")
+                .subcommand_required(true)
+                .arg_required_else_help(true)
+                .subcommand(list_command(
+                    "editorconfig",
+                    "List and validate .editorconfig files",
+                ))
+                .subcommand(list_command(
+                    "extensions",
+                    "Summarize file extensions in the tree",
+                )),
+        )
+        .subcommand(
             Command::new("init")
                 .about("Create example config files")
                 .subcommand_required(true)
@@ -188,6 +226,12 @@ fn build_cli() -> Command {
 }
 
 fn scan_command(name: &'static str, about: &'static str) -> Command {
+    Command::new(name)
+        .about(about)
+        .arg(Arg::new("paths").value_name("PATHS").num_args(0..))
+}
+
+fn list_command(name: &'static str, about: &'static str) -> Command {
     Command::new(name)
         .about(about)
         .arg(Arg::new("paths").value_name("PATHS").num_args(0..))
@@ -210,7 +254,7 @@ where
         Some((_, value))
             if value
                 .to_str()
-                .is_some_and(|value| matches!(value, "check" | "fix" | "init")) =>
+                .is_some_and(|value| matches!(value, "check" | "fix" | "init" | "list")) =>
         {
             args
         }
@@ -268,6 +312,20 @@ mod tests {
         let cli = parse(&["fix", "-u"]).unwrap();
         assert_eq!(cli.action(), Action::Fix);
         assert!(cli.no_ignore());
+    }
+
+    #[test]
+    fn parses_list_editorconfig_with_default_path() {
+        let cli = parse(&["list", "editorconfig"]).unwrap();
+        assert_eq!(cli.action(), Action::ListEditorconfig);
+        assert_eq!(cli.paths(), ["."]);
+    }
+
+    #[test]
+    fn parses_list_extensions_with_explicit_path() {
+        let cli = parse(&["list", "extensions", "src"]).unwrap();
+        assert_eq!(cli.action(), Action::ListExtensions);
+        assert_eq!(cli.paths(), ["src"]);
     }
 
     #[test]

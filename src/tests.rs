@@ -7,6 +7,10 @@ use crate::{
     args::Verbosity,
     collect_scan_paths,
     configs::{FilePolicy, LineEnding, PolicyCache, RootConfig},
+    list::{
+        discover_editorconfigs, render_extension_summary, summarize_extensions,
+        validate_editorconfig,
+    },
     violation::ViolationKind,
 };
 
@@ -134,6 +138,109 @@ fn walk_paths_directory_argument_respects_ignore_files() {
 
     assert!(files.contains(&kept));
     assert!(!files.contains(&ignored));
+}
+
+#[test]
+fn discover_editorconfigs_finds_nested_files_and_respects_ignore_files() {
+    let dir = TempDir::new().unwrap();
+    let root = write_temp(dir.path(), ".editorconfig", "root = true\n");
+    write_temp(dir.path(), ".ignore", "vendor/\n");
+    let src = dir.path().join("src");
+    fs::create_dir(&src).unwrap();
+    let nested = write_temp(&src, ".editorconfig", "root = false\n");
+    let vendor = dir.path().join("vendor");
+    fs::create_dir(&vendor).unwrap();
+    let ignored = write_temp(&vendor, ".editorconfig", "root = false\n");
+
+    let (configs, found_failures) =
+        discover_editorconfigs(&[dir.path().display().to_string()], true).unwrap();
+
+    assert!(!found_failures);
+    assert_eq!(configs, vec![root, nested]);
+    assert!(!configs.contains(&ignored));
+}
+
+#[test]
+fn validate_editorconfig_reports_line_errors() {
+    let dir = TempDir::new().unwrap();
+    let path = write_temp(dir.path(), ".editorconfig", "root = true\n[\n");
+
+    let err = validate_editorconfig(&path).unwrap_err();
+
+    assert!(err.contains(".editorconfig:"));
+    assert!(err.contains("invalid line"));
+}
+
+#[test]
+fn summarize_extensions_counts_all_extensions_except_editorconfig() {
+    let dir = TempDir::new().unwrap();
+    write_temp(dir.path(), ".editorconfig", "root = true\n");
+    write_temp(dir.path(), ".ignore", "ignored/\n");
+    write_temp(dir.path(), "main.rs", "");
+    write_temp(dir.path(), "lib.RS", "");
+    write_temp(dir.path(), "Cargo.toml", "");
+    write_temp(dir.path(), "README", "");
+    write_temp(dir.path(), "image.png", "");
+    let ignored = dir.path().join("ignored");
+    fs::create_dir(&ignored).unwrap();
+    write_temp(&ignored, "skip.rs", "");
+
+    let (summary, found_failures) =
+        summarize_extensions(&[dir.path().display().to_string()], true).unwrap();
+
+    assert!(!found_failures);
+    assert_eq!(
+        render_extension_summary(&summary, Verbosity::Normal),
+        vec![
+            "2\t.rs".to_string(),
+            "2\t[no extension]".to_string(),
+            "1\t.png".to_string(),
+            "1\t.toml".to_string(),
+        ]
+    );
+}
+
+#[test]
+fn summarize_extensions_ignores_vcs_directories() {
+    let dir = TempDir::new().unwrap();
+    write_temp(dir.path(), ".editorconfig", "root = true\n");
+    write_temp(dir.path(), "main.rs", "");
+    for vcs_dir in [".git", ".hg", ".svn"] {
+        let path = dir.path().join(vcs_dir);
+        fs::create_dir(&path).unwrap();
+        write_temp(&path, "ignored.txt", "");
+    }
+
+    let (summary, found_failures) =
+        summarize_extensions(&[dir.path().display().to_string()], true).unwrap();
+
+    assert!(!found_failures);
+    assert_eq!(
+        render_extension_summary(&summary, Verbosity::Normal),
+        vec!["1\t.rs".to_string()]
+    );
+}
+
+#[test]
+fn render_extension_summary_verbose_expands_no_extension_names() {
+    let dir = TempDir::new().unwrap();
+    write_temp(dir.path(), ".editorconfig", "root = true\n");
+    write_temp(dir.path(), "README", "");
+    write_temp(dir.path(), "LICENSE", "");
+    write_temp(dir.path(), "README.copy", "");
+
+    let (summary, found_failures) =
+        summarize_extensions(&[dir.path().display().to_string()], true).unwrap();
+
+    assert!(!found_failures);
+    assert_eq!(
+        render_extension_summary(&summary, Verbosity::Verbose),
+        vec![
+            "1\tLICENSE".to_string(),
+            "1\tREADME".to_string(),
+            "1\t.copy".to_string(),
+        ]
+    );
 }
 
 #[test]

@@ -3,6 +3,7 @@ mod args;
 mod configs;
 mod ignores;
 mod inits;
+mod list;
 mod output;
 mod violation;
 
@@ -16,6 +17,7 @@ use crate::action::{RunState, process_file, walk_paths};
 use crate::args::{Action, CliOutcome, Verbosity, parse_cli};
 use crate::configs::PolicyCache;
 use crate::inits::{init_editorconfig, init_ignore_revs};
+use crate::list::{list_editorconfigs, list_extensions};
 use crate::output::is_broken_pipe;
 
 fn main() -> ExitCode {
@@ -50,6 +52,22 @@ fn run() -> std::io::Result<ExitCode> {
             } else {
                 Ok(ExitCode::FAILURE)
             };
+        }
+        Action::ListEditorconfig => {
+            return Ok(if list_editorconfigs(cli.paths(), !cli.no_ignore())? {
+                ExitCode::FAILURE
+            } else {
+                ExitCode::SUCCESS
+            });
+        }
+        Action::ListExtensions => {
+            return Ok(
+                if list_extensions(cli.paths(), !cli.no_ignore(), cli.verbosity())? {
+                    ExitCode::FAILURE
+                } else {
+                    ExitCode::SUCCESS
+                },
+            );
         }
         Action::Check | Action::Fix => {}
     }

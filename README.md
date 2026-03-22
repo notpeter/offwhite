@@ -7,8 +7,6 @@ Check and fix trailing whitespace and final newlines, driven by `.editorconfig`.
 
 ## Installation
 
-Install from GitHub with Cargo:
-
 ```sh
 cargo install --git https://github.com/notpeter/offwhite.git offwhite
 ```
@@ -19,10 +17,12 @@ cargo install --git https://github.com/notpeter/offwhite.git offwhite
 Offwhite enforces .editconfig whitespace and newline settings
 
 Usage:
-  offwhite check [OPTIONS] [PATHS]...       Check for violations
-  offwhite fix [OPTIONS] [PATHS]...         Fix files in place
-  offwhite init editorconfig                Create an example .editorconfig
-  offwhite init ignore-revs                 Create an example .git-blame-ignore-revs
+  offwhite check              Check for violations
+  offwhite fix                Fix files in place
+  offwhite list editorconfig  List and validate .editorconfig files
+  offwhite list extensions    Summarize file extensions in the tree
+  offwhite init editorconfig  Create an example .editorconfig
+  offwhite init ignore-revs   Create an example .git-blame-ignore-revs
 
 Options:
   -q, --quiet                 Suppress warnings

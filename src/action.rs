@@ -10,26 +10,73 @@ use crate::violation::{Violation, ViolationKind};
 
 use ignore::WalkBuilder;
 
+#[derive(Clone, Copy)]
+pub(crate) struct WalkOptions {
+    pub respect_ignore_files: bool,
+    pub use_default_ignores: bool,
+    pub ignore_vcs_dirs: bool,
+}
+
+impl WalkOptions {
+    pub(crate) const fn scan(respect_ignore_files: bool) -> Self {
+        Self {
+            respect_ignore_files,
+            use_default_ignores: true,
+            ignore_vcs_dirs: false,
+        }
+    }
+
+    pub(crate) const fn listing(respect_ignore_files: bool) -> Self {
+        Self {
+            respect_ignore_files,
+            use_default_ignores: false,
+            ignore_vcs_dirs: false,
+        }
+    }
+
+    pub(crate) const fn extension_listing(respect_ignore_files: bool) -> Self {
+        Self {
+            respect_ignore_files,
+            use_default_ignores: false,
+            ignore_vcs_dirs: true,
+        }
+    }
+}
+
 fn walk_dir(
     dir: &Path,
-    respect_ignore_files: bool,
+    options: WalkOptions,
     mut on_file: impl FnMut(PathBuf) -> io::Result<()>,
 ) -> io::Result<()> {
     let mut builder = WalkBuilder::new(dir);
-    let default_ignores = build_default_ignores(dir);
+    let default_ignores = options
+        .use_default_ignores
+        .then(|| build_default_ignores(dir));
     builder
-        .ignore(respect_ignore_files)
-        .git_ignore(respect_ignore_files)
-        .git_global(respect_ignore_files)
-        .git_exclude(respect_ignore_files)
+        .ignore(options.respect_ignore_files)
+        .git_ignore(options.respect_ignore_files)
+        .git_global(options.respect_ignore_files)
+        .git_exclude(options.respect_ignore_files)
         .hidden(false);
     builder.filter_entry(move |entry| {
-        !default_ignores
-            .matched(
-                entry.path(),
-                entry.file_type().is_some_and(|ft| ft.is_dir()),
-            )
-            .is_ignore()
+        if options.ignore_vcs_dirs
+            && entry.file_type().is_some_and(|ft| ft.is_dir())
+            && entry
+                .path()
+                .file_name()
+                .is_some_and(|name| matches!(name.to_str(), Some(".git" | ".hg" | ".svn")))
+        {
+            return false;
+        }
+
+        default_ignores.as_ref().is_none_or(|ignores| {
+            !ignores
+                .matched(
+                    entry.path(),
+                    entry.file_type().is_some_and(|ft| ft.is_dir()),
+                )
+                .is_ignore()
+        })
     });
 
     let walker = builder.build();
@@ -47,9 +94,9 @@ fn walk_dir(
     Ok(())
 }
 
-pub(crate) fn walk_paths(
+pub(crate) fn walk_paths_with(
     paths: &[String],
-    respect_ignore_files: bool,
+    options: WalkOptions,
     mut on_file: impl FnMut(PathBuf) -> io::Result<()>,
 ) -> io::Result<()> {
     for path in paths {
@@ -57,13 +104,21 @@ pub(crate) fn walk_paths(
         if path.is_file() {
             on_file(path)?;
         } else if path.is_dir() {
-            walk_dir(&path, respect_ignore_files, &mut on_file)?;
+            walk_dir(&path, options, &mut on_file)?;
         } else {
             eprintln!("{}: no such file or directory", path.display());
         }
     }
 
     Ok(())
+}
+
+pub(crate) fn walk_paths(
+    paths: &[String],
+    respect_ignore_files: bool,
+    on_file: impl FnMut(PathBuf) -> io::Result<()>,
+) -> io::Result<()> {
+    walk_paths_with(paths, WalkOptions::scan(respect_ignore_files), on_file)
 }
 
 pub(crate) struct RunState {
@@ -132,7 +187,10 @@ pub(crate) fn process_file(
     match action {
         Action::Fix => process_fix(path, policy, verbosity, run_state),
         Action::Check => process_check(path, policy, verbosity, run_state)?,
-        Action::InitEditorconfig | Action::InitIgnoreRevs => unreachable!(),
+        Action::InitEditorconfig
+        | Action::InitIgnoreRevs
+        | Action::ListEditorconfig
+        | Action::ListExtensions => unreachable!(),
     }
 
     Ok(())
