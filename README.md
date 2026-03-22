@@ -66,6 +66,7 @@ insert_final_newline = true
 ```
 
 `offwhite` only operates when `.editorconfig` policy in effect for a given path contains `charset = utf-8`.
+When you pass explicit paths, `.editorconfig` lookup starts from each target path and walks upward from there, not from the shell's current working directory.
 Sections with alternative charset policies are skipped; in verbose mode, `offwhite` warns when this happens.
 Files that are not valid UTF-8 are skipped with a warning.
 

@@ -5,6 +5,7 @@ use tempfile::TempDir;
 use crate::{
     action::{FileStatus, check_file_with, fix_file, walk_paths},
     configs::{FilePolicy, LineEnding, PolicyCache, RootConfigStatus},
+    first_target_root_config_error,
     violation::ViolationKind,
 };
 
@@ -661,6 +662,52 @@ fn root_config_status_accepts_utf8_root_section() {
     let status = cache.root_config_status(dir.path());
 
     assert_eq!(status, RootConfigStatus::Ready);
+}
+
+#[test]
+fn first_target_root_config_error_uses_target_path() {
+    let dir = TempDir::new().unwrap();
+    let target = dir.path().join("target");
+    fs::create_dir(&target).unwrap();
+
+    let mut cache = PolicyCache::new();
+    let error =
+        first_target_root_config_error(&mut cache, &[target.display().to_string()]).unwrap();
+
+    assert_eq!(error.0, target);
+    assert_eq!(error.1, RootConfigStatus::Missing);
+}
+
+#[test]
+fn first_target_root_config_error_reports_missing_utf8_root() {
+    let dir = TempDir::new().unwrap();
+    write_temp(
+        dir.path(),
+        ".editorconfig",
+        "root = true\n\n[*.rs]\ncharset = utf-8\n",
+    );
+
+    let mut cache = PolicyCache::new();
+    let error =
+        first_target_root_config_error(&mut cache, &[dir.path().display().to_string()]).unwrap();
+
+    assert_eq!(error.0, dir.path());
+    assert_eq!(error.1, RootConfigStatus::MissingUtf8);
+}
+
+#[test]
+fn first_target_root_config_error_accepts_ready_target() {
+    let dir = TempDir::new().unwrap();
+    write_temp(
+        dir.path(),
+        ".editorconfig",
+        "root = true\n\n[*]\ncharset = utf-8\n",
+    );
+
+    let mut cache = PolicyCache::new();
+    let error = first_target_root_config_error(&mut cache, &[dir.path().display().to_string()]);
+
+    assert!(error.is_none());
 }
 
 // --- no-op when both policies are off ---

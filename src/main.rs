@@ -57,19 +57,23 @@ fn run() -> std::io::Result<ExitCode> {
     let verbosity = cli.verbosity();
     let mut policy_cache = PolicyCache::new();
 
-    let cwd = std::env::current_dir().unwrap_or_else(|_| PathBuf::from("."));
-    match policy_cache.root_config_status(&cwd) {
-        RootConfigStatus::Ready => {}
-        RootConfigStatus::Missing => {
+    match first_target_root_config_error(&mut policy_cache, cli.paths()) {
+        None => {}
+        Some((_, RootConfigStatus::Ready)) => unreachable!(),
+        Some((path, RootConfigStatus::Missing)) => {
             if verbosity >= Verbosity::Normal {
-                eprintln!("warning: no root .editorconfig file found; nothing checked");
+                eprintln!(
+                    "warning: {}: no root .editorconfig file found; nothing checked",
+                    path.display()
+                );
             }
             return Ok(ExitCode::FAILURE);
         }
-        RootConfigStatus::MissingUtf8 => {
+        Some((path, RootConfigStatus::MissingUtf8)) => {
             if verbosity >= Verbosity::Normal {
                 eprintln!(
-                    "warning: root .editorconfig must contain `charset = utf-8` in a `[*]` section; nothing checked"
+                    "warning: {}: root .editorconfig must contain `charset = utf-8` in a `[*]` section; nothing checked",
+                    path.display()
                 );
             }
             return Ok(ExitCode::FAILURE);
@@ -92,5 +96,22 @@ fn run() -> std::io::Result<ExitCode> {
         ExitCode::FAILURE
     } else {
         ExitCode::SUCCESS
+    })
+}
+
+pub(crate) fn first_target_root_config_error(
+    policy_cache: &mut PolicyCache,
+    paths: &[String],
+) -> Option<(PathBuf, RootConfigStatus)> {
+    paths.iter().find_map(|path| {
+        let target = PathBuf::from(path);
+        if !target.exists() {
+            return None;
+        }
+
+        match policy_cache.root_config_status(&target) {
+            RootConfigStatus::Ready => None,
+            status => Some((target, status)),
+        }
     })
 }
