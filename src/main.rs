@@ -37,7 +37,7 @@ fn run() -> std::io::Result<ExitCode> {
     let action = cli.action();
 
     match action {
-        Action::Init => {
+        Action::InitEditorconfig => {
             return if init_editorconfig() {
                 Ok(ExitCode::SUCCESS)
             } else {

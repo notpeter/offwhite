@@ -21,8 +21,8 @@ Offwhite enforces .editconfig whitespace and newline settings
 Usage:
   offwhite check [OPTIONS] [PATHS]...       Check for violations
   offwhite fix [OPTIONS] [PATHS]...         Fix files in place
-  offwhite init                             Create an example .editorconfig
-  offwhite init-ignore-revs                 Create an example .git-blame-ignore-revs
+  offwhite init editorconfig                Create an example .editorconfig
+  offwhite init ignore-revs                 Create an example .git-blame-ignore-revs
 
 Options:
   -q, --quiet                 Suppress warnings
@@ -62,7 +62,7 @@ root = true
 charset = utf-8
 ```
 
-Use `offwhite init` to create an example `.editorconfig` in the current directory:
+Use `offwhite init editorconfig` to create an example `.editorconfig` in the current directory:
 
 ```editorconfig
 root = true
@@ -190,7 +190,7 @@ create a `.git-blame-ignore-revs` file which contain git commit ids which should
 transparent for git blame purposes. This means if you convert a tree from CRLF it is possible
 to preserve meaningful Git Blame information.
 
-Running `offwhite init-ignore-revs` will create you an template `.git-blame-ignore-revs` file
+Running `offwhite init ignore-revs` will create you an template `.git-blame-ignore-revs` file
 which contains instructions on how to configure git repo locally to use that file. GitHub and
 GitLab natively support this out of the box.
 

@@ -132,7 +132,7 @@ pub(crate) fn process_file(
     match action {
         Action::Fix => process_fix(path, policy, verbosity, run_state),
         Action::Check => process_check(path, policy, verbosity, run_state)?,
-        Action::Init | Action::InitIgnoreRevs => unreachable!(),
+        Action::InitEditorconfig | Action::InitIgnoreRevs => unreachable!(),
     }
 
     Ok(())

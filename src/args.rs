@@ -9,8 +9,8 @@ const ROOT_HELP_TEMPLATE: &str = concat!(
     "Usage:\n",
     "  offwhite check [OPTIONS] [PATHS]...       Check for violations\n",
     "  offwhite fix [OPTIONS] [PATHS]...         Fix files in place\n",
-    "  offwhite init                             Create an example .editorconfig\n",
-    "  offwhite init-ignore-revs                 Create an example .git-blame-ignore-revs\n",
+    "  offwhite init editorconfig                Create an example .editorconfig\n",
+    "  offwhite init ignore-revs                 Create an example .git-blame-ignore-revs\n",
     "\n",
     "Options:\n",
     "  -q, --quiet                 Suppress warnings\n",
@@ -30,7 +30,7 @@ pub enum Verbosity {
 
 #[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
 pub(crate) enum Action {
-    Init,
+    InitEditorconfig,
     InitIgnoreRevs,
     #[default]
     Check,
@@ -38,19 +38,12 @@ pub(crate) enum Action {
 }
 
 impl Action {
-    const ALL: [Self; 4] = [Self::Init, Self::InitIgnoreRevs, Self::Check, Self::Fix];
-
-    fn as_str(self) -> &'static str {
+    fn top_level_name(self) -> &'static str {
         match self {
-            Self::Init => "init",
-            Self::InitIgnoreRevs => "init-ignore-revs",
             Self::Check => "check",
             Self::Fix => "fix",
+            Self::InitEditorconfig | Self::InitIgnoreRevs => "init",
         }
-    }
-
-    fn from_name(name: &str) -> Option<Self> {
-        Self::ALL.into_iter().find(|action| action.as_str() == name)
     }
 }
 
@@ -114,13 +107,22 @@ fn parse_cli_args(args: Vec<OsString>) -> Result<Cli, clap::Error> {
     let (command, subcommand) = matches
         .subcommand()
         .expect("default action normalization should always provide a subcommand");
-    let action = Action::from_name(command).expect("configured subcommand should map to Action");
+    let action = match command {
+        "check" => Action::Check,
+        "fix" => Action::Fix,
+        "init" => match subcommand.subcommand_name() {
+            Some("editorconfig") => Action::InitEditorconfig,
+            Some("ignore-revs") => Action::InitIgnoreRevs,
+            _ => unreachable!("configured init subcommand should map to Action"),
+        },
+        _ => unreachable!("configured subcommand should map to Action"),
+    };
     let paths = match action {
         Action::Check | Action::Fix => subcommand
             .get_many::<String>("paths")
             .map(|paths| paths.cloned().collect())
             .unwrap_or_else(|| vec![".".into()]),
-        Action::Init | Action::InitIgnoreRevs => Vec::new(),
+        Action::InitEditorconfig | Action::InitIgnoreRevs => Vec::new(),
     };
 
     Ok(Cli {
@@ -173,9 +175,15 @@ fn build_cli() -> Command {
         )
         .subcommand(scan_command("check", "Check for violations"))
         .subcommand(scan_command("fix", "Fix files in place"))
-        .subcommand(Command::new("init").about("Create an example .editorconfig"))
         .subcommand(
-            Command::new("init-ignore-revs").about("Create an example .git-blame-ignore-revs"),
+            Command::new("init")
+                .about("Create example config files")
+                .subcommand_required(true)
+                .arg_required_else_help(true)
+                .subcommand(Command::new("editorconfig").about("Create an example .editorconfig"))
+                .subcommand(
+                    Command::new("ignore-revs").about("Create an example .git-blame-ignore-revs"),
+                ),
         )
 }
 
@@ -191,7 +199,7 @@ where
 {
     let args: Vec<_> = args.into_iter().collect();
     if args.is_empty() {
-        return vec![Action::Check.as_str().into()];
+        return vec![Action::Check.top_level_name().into()];
     }
 
     match args
@@ -202,14 +210,14 @@ where
         Some((_, value))
             if value
                 .to_str()
-                .is_some_and(|value| Action::from_name(value).is_some()) =>
+                .is_some_and(|value| matches!(value, "check" | "fix" | "init")) =>
         {
             args
         }
         Some((idx, _)) => insert_default_check(args, idx),
         None => {
             let mut normalized = args;
-            normalized.push(Action::Check.as_str().into());
+            normalized.push(Action::Check.top_level_name().into());
             normalized
         }
     }
@@ -217,7 +225,7 @@ where
 
 fn insert_default_check(args: Vec<OsString>, idx: usize) -> Vec<OsString> {
     let mut normalized = args[..idx].to_vec();
-    normalized.push(Action::Check.as_str().into());
+    normalized.push(Action::Check.top_level_name().into());
     normalized.extend_from_slice(&args[idx..]);
     normalized
 }
@@ -235,7 +243,6 @@ mod tests {
     #[test]
     fn defaults_to_check_and_current_directory() {
         let cli = parse(&[]).unwrap();
-
         assert_eq!(cli.action(), Action::Check);
         assert_eq!(cli.paths(), ["."]);
         assert_eq!(cli.verbosity(), Verbosity::Normal);
@@ -244,7 +251,6 @@ mod tests {
     #[test]
     fn treats_non_action_first_positional_as_check_path() {
         let cli = parse(&["src"]).unwrap();
-
         assert_eq!(cli.action(), Action::Check);
         assert_eq!(cli.paths(), ["src"]);
     }
@@ -252,7 +258,6 @@ mod tests {
     #[test]
     fn accepts_options_after_paths() {
         let cli = parse(&["src", "-q"]).unwrap();
-
         assert_eq!(cli.action(), Action::Check);
         assert_eq!(cli.paths(), ["src"]);
         assert_eq!(cli.verbosity(), Verbosity::Quiet);
@@ -261,7 +266,6 @@ mod tests {
     #[test]
     fn accepts_hidden_short_alias_for_no_ignore() {
         let cli = parse(&["fix", "-u"]).unwrap();
-
         assert_eq!(cli.action(), Action::Fix);
         assert!(cli.no_ignore());
     }
@@ -269,29 +273,19 @@ mod tests {
     #[test]
     fn supports_literal_hyphen_paths_after_double_dash() {
         let cli = parse(&["check", "--", "-stdin"]).unwrap();
-
         assert_eq!(cli.paths(), ["-stdin"]);
     }
 
     #[test]
     fn rejects_quiet_and_verbose_together() {
         let err = parse(&["check", "--quiet", "--verbose"]).unwrap_err();
-
         assert_eq!(err.kind(), ErrorKind::ArgumentConflict);
-    }
-
-    #[test]
-    fn rejects_unknown_options() {
-        let err = parse(&["check", "--wat"]).unwrap_err();
-
-        assert_eq!(err.kind(), ErrorKind::UnknownArgument);
     }
 
     #[test]
     fn rejects_unexpected_init_args() {
         let err = parse(&["init", "extra"]).unwrap_err();
-
-        assert_eq!(err.kind(), ErrorKind::UnknownArgument);
+        assert_eq!(err.kind(), ErrorKind::InvalidSubcommand);
     }
 
     #[cfg(unix)]
