@@ -56,37 +56,11 @@ fn run() -> std::io::Result<ExitCode> {
 
     let verbosity = cli.verbosity();
     let mut policy_cache = PolicyCache::new();
-
-    let mut warned_root_configs = std::collections::HashSet::new();
-    for path in cli.paths() {
-        let target = PathBuf::from(path);
-        if !target.exists() {
-            continue;
-        }
-
-        let Some(root_config) = policy_cache.root_config(&target) else {
-            if verbosity >= Verbosity::Normal {
-                eprintln!(
-                    "warning: {}: no root .editorconfig file found; nothing checked",
-                    target.display()
-                );
-            }
-            return Ok(ExitCode::FAILURE);
-        };
-
-        if !root_config.has_utf8_section
-            && verbosity >= Verbosity::Normal
-            && warned_root_configs.insert(root_config.path.clone())
-        {
-            eprintln!(
-                "warning: {}: root .editorconfig does not declare `charset = utf-8` in any section",
-                root_config.path.display()
-            );
-        }
-    }
+    let (scan_paths, mut found_failures) =
+        collect_scan_paths(cli.paths(), &mut policy_cache, verbosity);
 
     let mut run_state = RunState::new();
-    walk_paths(cli.paths(), !cli.no_ignore(), |path| {
+    walk_paths(&scan_paths, !cli.no_ignore(), |path| {
         process_file(
             &path,
             action,
@@ -101,9 +75,55 @@ fn run() -> std::io::Result<ExitCode> {
         eprintln!("warning: no files scanned; no matching .editorconfig sections enabled scanning");
     }
 
-    Ok(if run_state.found_violations {
+    found_failures |= run_state.found_violations;
+
+    Ok(if found_failures {
         ExitCode::FAILURE
     } else {
         ExitCode::SUCCESS
     })
+}
+
+fn collect_scan_paths(
+    paths: &[String],
+    policy_cache: &mut PolicyCache,
+    verbosity: Verbosity,
+) -> (Vec<String>, bool) {
+    let mut scan_paths = Vec::new();
+    let mut found_failures = false;
+    let mut warned_root_configs = std::collections::HashSet::new();
+
+    for path in paths {
+        let target = PathBuf::from(path);
+        if !target.exists() {
+            eprintln!("{}: no such file or directory", target.display());
+            found_failures = true;
+            continue;
+        }
+
+        let Some(root_config) = policy_cache.root_config(&target) else {
+            if verbosity >= Verbosity::Normal {
+                eprintln!(
+                    "warning: {}: no root .editorconfig file found; nothing checked",
+                    target.display()
+                );
+            }
+            found_failures = true;
+            continue;
+        };
+
+        if !root_config.has_utf8_section
+            && verbosity >= Verbosity::Normal
+            && warned_root_configs.insert(root_config.path.clone())
+        {
+            eprintln!(
+                "warning: {}: root .editorconfig does not declare `charset = utf-8` in any section",
+                root_config.path.display()
+            );
+        }
+
+        scan_paths.push(path.clone());
+    }
+
+    (scan_paths, found_failures)
 }

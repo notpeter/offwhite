@@ -4,6 +4,8 @@ use tempfile::TempDir;
 
 use crate::{
     action::{FileStatus, check_file_with, fix_file, walk_paths},
+    args::Verbosity,
+    collect_scan_paths,
     configs::{FilePolicy, LineEnding, PolicyCache, RootConfig},
     violation::ViolationKind,
 };
@@ -132,6 +134,43 @@ fn walk_paths_directory_argument_respects_ignore_files() {
 
     assert!(files.contains(&kept));
     assert!(!files.contains(&ignored));
+}
+
+#[test]
+fn collect_scan_paths_fails_for_missing_paths() {
+    let mut policy_cache = PolicyCache::new();
+    let (scan_paths, found_failures) = collect_scan_paths(
+        &["does-not-exist".into()],
+        &mut policy_cache,
+        Verbosity::Normal,
+    );
+
+    assert!(scan_paths.is_empty());
+    assert!(found_failures);
+}
+
+#[test]
+fn collect_scan_paths_keeps_valid_paths_when_another_has_no_root_config() {
+    let dir = TempDir::new().unwrap();
+
+    let valid = dir.path().join("valid");
+    fs::create_dir(&valid).unwrap();
+    write_temp(
+        &valid,
+        ".editorconfig",
+        "root = true\n\n[*]\ncharset = utf-8\n",
+    );
+
+    let invalid = dir.path().join("invalid");
+    fs::create_dir(&invalid).unwrap();
+
+    let paths = vec![valid.display().to_string(), invalid.display().to_string()];
+    let mut policy_cache = PolicyCache::new();
+    let (scan_paths, found_failures) =
+        collect_scan_paths(&paths, &mut policy_cache, Verbosity::Normal);
+
+    assert_eq!(scan_paths, vec![valid.display().to_string()]);
+    assert!(found_failures);
 }
 // --- check_file tests ---
 
