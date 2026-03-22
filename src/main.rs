@@ -14,7 +14,7 @@ use std::process::ExitCode;
 
 use crate::action::{RunState, process_file, walk_paths};
 use crate::args::{Action, CliOutcome, Verbosity, parse_cli};
-use crate::configs::{PolicyCache, RootConfigStatus};
+use crate::configs::PolicyCache;
 use crate::inits::{init_editorconfig, init_ignore_revs};
 use crate::output::is_broken_pipe;
 
@@ -57,26 +57,31 @@ fn run() -> std::io::Result<ExitCode> {
     let verbosity = cli.verbosity();
     let mut policy_cache = PolicyCache::new();
 
-    match first_target_root_config_error(&mut policy_cache, cli.paths()) {
-        None => {}
-        Some((_, RootConfigStatus::Ready)) => unreachable!(),
-        Some((path, RootConfigStatus::Missing)) => {
+    let mut warned_root_configs = std::collections::HashSet::new();
+    for path in cli.paths() {
+        let target = PathBuf::from(path);
+        if !target.exists() {
+            continue;
+        }
+
+        let Some(root_config) = policy_cache.root_config(&target) else {
             if verbosity >= Verbosity::Normal {
                 eprintln!(
                     "warning: {}: no root .editorconfig file found; nothing checked",
-                    path.display()
+                    target.display()
                 );
             }
             return Ok(ExitCode::FAILURE);
-        }
-        Some((path, RootConfigStatus::MissingUtf8)) => {
-            if verbosity >= Verbosity::Normal {
-                eprintln!(
-                    "warning: {}: root .editorconfig must contain `charset = utf-8` in a `[*]` section; nothing checked",
-                    path.display()
-                );
-            }
-            return Ok(ExitCode::FAILURE);
+        };
+
+        if !root_config.has_utf8_section
+            && verbosity >= Verbosity::Normal
+            && warned_root_configs.insert(root_config.path.clone())
+        {
+            eprintln!(
+                "warning: {}: root .editorconfig does not declare `charset = utf-8` in any section",
+                root_config.path.display()
+            );
         }
     }
 
@@ -92,26 +97,13 @@ fn run() -> std::io::Result<ExitCode> {
         )
     })?;
 
+    if run_state.scanned_no_files() && verbosity >= Verbosity::Normal {
+        eprintln!("warning: no files scanned; no matching .editorconfig sections enabled scanning");
+    }
+
     Ok(if run_state.found_violations {
         ExitCode::FAILURE
     } else {
         ExitCode::SUCCESS
-    })
-}
-
-pub(crate) fn first_target_root_config_error(
-    policy_cache: &mut PolicyCache,
-    paths: &[String],
-) -> Option<(PathBuf, RootConfigStatus)> {
-    paths.iter().find_map(|path| {
-        let target = PathBuf::from(path);
-        if !target.exists() {
-            return None;
-        }
-
-        match policy_cache.root_config_status(&target) {
-            RootConfigStatus::Ready => None,
-            status => Some((target, status)),
-        }
     })
 }

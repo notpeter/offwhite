@@ -1,4 +1,3 @@
-use std::collections::HashSet;
 use std::fs;
 use std::io;
 use std::path::{Path, PathBuf};
@@ -69,19 +68,33 @@ pub(crate) fn walk_paths(
 
 pub(crate) struct RunState {
     pub found_violations: bool,
-    warned_nested_roots: HashSet<PathBuf>,
+    files_seen: u64,
+    files_scanned: u64,
 }
 
 impl RunState {
     pub(crate) fn new() -> Self {
         Self {
             found_violations: false,
-            warned_nested_roots: HashSet::new(),
+            files_seen: 0,
+            files_scanned: 0,
         }
     }
 
     fn mark_violation(&mut self) {
         self.found_violations = true;
+    }
+
+    fn mark_file_seen(&mut self) {
+        self.files_seen += 1;
+    }
+
+    fn mark_file_scanned(&mut self) {
+        self.files_scanned += 1;
+    }
+
+    pub(crate) fn scanned_no_files(&self) -> bool {
+        self.files_seen > 0 && self.files_scanned == 0
     }
 }
 
@@ -93,17 +106,9 @@ pub(crate) fn process_file(
     policy_cache: &mut PolicyCache,
     run_state: &mut RunState,
 ) -> io::Result<()> {
+    run_state.mark_file_seen();
     let decision = policy_cache.file_policy(path);
-    if let Some(config_path) = &decision.nested_root_missing_utf8 {
-        if verbosity >= Verbosity::Verbose
-            && run_state.warned_nested_roots.insert(config_path.clone())
-        {
-            eprintln!(
-                "warning: {}: nested .editorconfig with `root = true` lacks `charset = utf-8` in a `[*]` section. Skipping",
-                config_path.display()
-            );
-        }
-        run_state.mark_violation();
+    if !decision.has_matching_utf8_section {
         return Ok(());
     }
 
@@ -122,6 +127,7 @@ pub(crate) fn process_file(
     {
         return Ok(());
     }
+    run_state.mark_file_scanned();
 
     match action {
         Action::Fix => process_fix(path, policy, verbosity, run_state),

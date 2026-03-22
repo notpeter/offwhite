@@ -48,7 +48,7 @@ enum SectionCharset {
 #[derive(Clone)]
 struct ParsedEditorConfig {
     is_root: bool,
-    has_utf8_root_section: bool,
+    has_utf8_section: bool,
     sections: Vec<ParsedSection>,
 }
 
@@ -65,15 +65,14 @@ type CachedConfigStack = Result<Option<Rc<ConfigStack>>, ()>;
 #[derive(Clone, Default)]
 pub struct PolicyDecision {
     pub policy: FilePolicy,
+    pub has_matching_utf8_section: bool,
     pub skipped_non_utf8_sections: bool,
-    pub nested_root_missing_utf8: Option<PathBuf>,
 }
 
-#[derive(Clone, Copy, Debug, PartialEq, Eq)]
-pub enum RootConfigStatus {
-    Missing,
-    MissingUtf8,
-    Ready,
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub struct RootConfig {
+    pub path: PathBuf,
+    pub has_utf8_section: bool,
 }
 
 pub struct PolicyCache {
@@ -101,28 +100,32 @@ impl PolicyCache {
 
         let decision = self.properties_for(&normalized).map_or_else(
             || PolicyDecision::default(),
-            |(props, skipped_non_utf8_sections, nested_root_missing_utf8)| PolicyDecision {
-                policy: policy_from_properties(&props),
-                skipped_non_utf8_sections,
-                nested_root_missing_utf8,
+            |resolved| PolicyDecision {
+                policy: if resolved.has_matching_utf8_section {
+                    policy_from_properties(&resolved.props)
+                } else {
+                    FilePolicy::default()
+                },
+                has_matching_utf8_section: resolved.has_matching_utf8_section,
+                skipped_non_utf8_sections: resolved.skipped_non_utf8_sections,
             },
         );
         self.policies.insert(normalized, decision.clone());
         decision
     }
 
-    pub fn root_config_status(&mut self, start: &Path) -> RootConfigStatus {
+    pub fn root_config(&mut self, start: &Path) -> Option<RootConfig> {
         let normalized = self.normalize_target_path(start);
         let dir = if normalized.is_dir() {
             normalized
         } else if let Some(parent) = normalized.parent() {
             parent.to_path_buf()
         } else {
-            return RootConfigStatus::Missing;
+            return None;
         };
 
         let Ok(Some(stack)) = self.config_stack_for_dir(&dir) else {
-            return RootConfigStatus::Missing;
+            return None;
         };
 
         let mut current = Some(stack);
@@ -132,16 +135,15 @@ impl PolicyCache {
                 continue;
             };
             if parsed.is_root {
-                return if parsed.has_utf8_root_section {
-                    RootConfigStatus::Ready
-                } else {
-                    RootConfigStatus::MissingUtf8
-                };
+                return Some(RootConfig {
+                    path: node.config_path.clone(),
+                    has_utf8_section: parsed.has_utf8_section,
+                });
             }
             current = node.parent.clone();
         }
 
-        RootConfigStatus::Missing
+        None
     }
 
     fn normalize_target_path(&self, path: &Path) -> PathBuf {
@@ -152,48 +154,29 @@ impl PolicyCache {
         }
     }
 
-    fn properties_for(&mut self, path: &Path) -> Option<(Properties, bool, Option<PathBuf>)> {
-        let mut props = Properties::new();
-        let mut skipped_non_utf8_sections = false;
-        let mut nested_root_missing_utf8 = None;
+    fn properties_for(&mut self, path: &Path) -> Option<ResolvedProperties> {
+        let mut resolved = ResolvedProperties::default();
         let dir = if path.is_dir() { path } else { path.parent()? };
         let stack = self.config_stack_for_dir(dir).ok()??;
 
-        self.apply_config_stack(
-            &stack,
-            path,
-            &mut props,
-            &mut skipped_non_utf8_sections,
-            &mut nested_root_missing_utf8,
-        );
+        self.apply_config_stack(&stack, path, &mut resolved);
 
-        Some((props, skipped_non_utf8_sections, nested_root_missing_utf8))
+        Some(resolved)
     }
 
     fn apply_config_stack(
         &mut self,
         stack: &ConfigStack,
         path: &Path,
-        props: &mut Properties,
-        skipped_non_utf8_sections: &mut bool,
-        nested_root_missing_utf8: &mut Option<PathBuf>,
+        resolved: &mut ResolvedProperties,
     ) {
         if let Some(parent) = stack.parent.as_deref() {
-            self.apply_config_stack(
-                parent,
-                path,
-                props,
-                skipped_non_utf8_sections,
-                nested_root_missing_utf8,
-            );
+            self.apply_config_stack(parent, path, resolved);
         }
 
         let Ok(Some(parsed)) = self.parsed_config(&stack.config_path) else {
             return;
         };
-        if parsed.is_root && !parsed.has_utf8_root_section {
-            nested_root_missing_utf8.get_or_insert_with(|| stack.config_path.clone());
-        }
 
         let base = stack.config_path.parent().unwrap_or(Path::new(""));
         let relative = path.strip_prefix(base).unwrap_or(path);
@@ -202,10 +185,15 @@ impl PolicyCache {
                 continue;
             }
             if parsed_section.charset == SectionCharset::Other {
-                *skipped_non_utf8_sections = true;
+                resolved.skipped_non_utf8_sections = true;
                 continue;
             }
-            let _ = parsed_section.section.apply_to(props, relative);
+            if parsed_section.charset == SectionCharset::Utf8 {
+                resolved.has_matching_utf8_section = true;
+            }
+            let _ = parsed_section
+                .section
+                .apply_to(&mut resolved.props, relative);
         }
     }
 
@@ -248,7 +236,7 @@ impl PolicyCache {
                 Ok(mut file) => {
                     let is_root = file.reader.is_root;
                     let mut sections = Vec::new();
-                    let mut has_utf8_root_section = false;
+                    let mut has_utf8_section = false;
                     for section in &mut file {
                         match section {
                             Ok(section) => {
@@ -256,9 +244,7 @@ impl PolicyCache {
                                     charset: section_charset(&section),
                                     section,
                                 };
-                                has_utf8_root_section |= parsed_section.charset
-                                    == SectionCharset::Utf8
-                                    && is_global_section(&parsed_section.section);
+                                has_utf8_section |= parsed_section.charset == SectionCharset::Utf8;
                                 sections.push(parsed_section);
                             }
                             Err(_) => return self.cache_parsed_config(path, Err(())),
@@ -266,7 +252,7 @@ impl PolicyCache {
                     }
                     Ok(Some(Rc::new(ParsedEditorConfig {
                         is_root,
-                        has_utf8_root_section,
+                        has_utf8_section,
                         sections,
                     })))
                 }
@@ -299,6 +285,13 @@ impl Default for FilePolicy {
     }
 }
 
+#[derive(Default)]
+struct ResolvedProperties {
+    props: Properties,
+    skipped_non_utf8_sections: bool,
+    has_matching_utf8_section: bool,
+}
+
 fn policy_from_properties(props: &Properties) -> FilePolicy {
     FilePolicy {
         trim_trailing_whitespace: matches!(
@@ -325,11 +318,4 @@ fn section_charset(section: &Section<Glob>) -> SectionCharset {
         Ok(_) => SectionCharset::Other,
         Err(_) => SectionCharset::Unset,
     }
-}
-
-fn is_global_section(section: &Section<Glob>) -> bool {
-    section
-        .pattern()
-        .as_ref()
-        .is_ok_and(|pattern| pattern == &Glob::new("*"))
 }

@@ -4,8 +4,7 @@ use tempfile::TempDir;
 
 use crate::{
     action::{FileStatus, check_file_with, fix_file, walk_paths},
-    configs::{FilePolicy, LineEnding, PolicyCache, RootConfigStatus},
-    first_target_root_config_error,
+    configs::{FilePolicy, LineEnding, PolicyCache, RootConfig},
     violation::ViolationKind,
 };
 
@@ -609,33 +608,41 @@ fn file_policy_skips_non_utf8_sections() {
 }
 
 #[test]
-fn file_policy_reports_nested_root_missing_utf8() {
+fn file_policy_requires_matching_utf8_section() {
     let dir = TempDir::new().unwrap();
     write_temp(
         dir.path(),
         ".editorconfig",
-        "root = true\n\n[*]\ncharset = utf-8\ntrim_trailing_whitespace = true\n",
-    );
-    let nested = dir.path().join("vendor");
-    fs::create_dir(&nested).unwrap();
-    write_temp(
-        &nested,
-        ".editorconfig",
         "root = true\n\n[*.txt]\ntrim_trailing_whitespace = true\n",
     );
-    let path = write_temp(&nested, "test.txt", "hello   ");
+    let path = write_temp(dir.path(), "test.txt", "hello   ");
 
     let mut cache = PolicyCache::new();
     let policy = cache.file_policy(&path);
 
-    assert_eq!(
-        policy.nested_root_missing_utf8,
-        Some(nested.join(".editorconfig"))
-    );
+    assert!(!policy.has_matching_utf8_section);
+    assert!(!policy.policy.trim_trailing_whitespace);
 }
 
 #[test]
-fn root_config_status_requires_root_utf8_section() {
+fn file_policy_uses_matching_utf8_section_from_same_stack() {
+    let dir = TempDir::new().unwrap();
+    write_temp(
+        dir.path(),
+        ".editorconfig",
+        "root = true\n\n[*.txt]\ncharset = utf-8\n\n[*.txt]\ntrim_trailing_whitespace = true\n",
+    );
+    let path = write_temp(dir.path(), "test.txt", "hello   ");
+
+    let mut cache = PolicyCache::new();
+    let policy = cache.file_policy(&path);
+
+    assert!(policy.has_matching_utf8_section);
+    assert!(policy.policy.trim_trailing_whitespace);
+}
+
+#[test]
+fn root_config_accepts_any_utf8_section() {
     let dir = TempDir::new().unwrap();
     write_temp(
         dir.path(),
@@ -644,70 +651,48 @@ fn root_config_status_requires_root_utf8_section() {
     );
 
     let mut cache = PolicyCache::new();
-    let status = cache.root_config_status(dir.path());
+    let root_config = cache.root_config(dir.path()).unwrap();
 
-    assert_eq!(status, RootConfigStatus::MissingUtf8);
+    assert_eq!(
+        root_config,
+        RootConfig {
+            path: dir.path().join(".editorconfig"),
+            has_utf8_section: true,
+        }
+    );
 }
 
 #[test]
-fn root_config_status_accepts_utf8_root_section() {
+fn root_config_reports_missing_utf8_sections() {
     let dir = TempDir::new().unwrap();
     write_temp(
         dir.path(),
         ".editorconfig",
-        "root = true\n\n[*]\ncharset = utf-8\n",
+        "root = true\n\n[*.rs]\ntrim_trailing_whitespace = true\n",
     );
 
     let mut cache = PolicyCache::new();
-    let status = cache.root_config_status(dir.path());
+    let root_config = cache.root_config(dir.path()).unwrap();
 
-    assert_eq!(status, RootConfigStatus::Ready);
+    assert_eq!(
+        root_config,
+        RootConfig {
+            path: dir.path().join(".editorconfig"),
+            has_utf8_section: false,
+        }
+    );
 }
 
 #[test]
-fn first_target_root_config_error_uses_target_path() {
+fn root_config_returns_none_when_missing() {
     let dir = TempDir::new().unwrap();
     let target = dir.path().join("target");
     fs::create_dir(&target).unwrap();
 
     let mut cache = PolicyCache::new();
-    let error =
-        first_target_root_config_error(&mut cache, &[target.display().to_string()]).unwrap();
+    let root_config = cache.root_config(&target);
 
-    assert_eq!(error.0, target);
-    assert_eq!(error.1, RootConfigStatus::Missing);
-}
-
-#[test]
-fn first_target_root_config_error_reports_missing_utf8_root() {
-    let dir = TempDir::new().unwrap();
-    write_temp(
-        dir.path(),
-        ".editorconfig",
-        "root = true\n\n[*.rs]\ncharset = utf-8\n",
-    );
-
-    let mut cache = PolicyCache::new();
-    let error =
-        first_target_root_config_error(&mut cache, &[dir.path().display().to_string()]).unwrap();
-
-    assert_eq!(error.0, dir.path());
-    assert_eq!(error.1, RootConfigStatus::MissingUtf8);
-}
-
-#[test]
-fn first_target_root_config_error_accepts_ready_target() {
-    let dir = TempDir::new().unwrap();
-    write_temp(
-        dir.path(),
-        ".editorconfig",
-        "root = true\n\n[*]\ncharset = utf-8\n",
-    );
-
-    let mut cache = PolicyCache::new();
-    let error = first_target_root_config_error(&mut cache, &[dir.path().display().to_string()]);
-
-    assert!(error.is_none());
+    assert!(root_config.is_none());
 }
 
 // --- no-op when both policies are off ---

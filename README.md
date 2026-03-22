@@ -39,14 +39,14 @@ Offwhite enforces compliance with the follow `.editorconfig` keys (when set):
 
 | Property                          | Effect                                       |
 | --------------------------------- | -------------------------------------------- |
-| `charset = utf-8`                 | Required in root `[*]` section               |
+| `charset = utf-8`                 | Required to enable scanning through files    |
 | `end_of_line = lf`                | Check/fix line endings (`lf` or `crlf`)      |
 | `trim_trailing_whitespace = true` | Check/fix trailing whitespace on lines       |
 | `insert_final_newline = true`     | Check/fix missing or extra trailing newlines |
 
 ## Initialization
 
-To operate, `offwhite` requires a root `.editconfig` which asserts `utf-8` is the default encoding:
+To operate, `offwhite` requires a root `.editconfig`:
 
 ```editorconfig
 root = true
@@ -65,7 +65,10 @@ trim_trailing_whitespace = true
 insert_final_newline = true
 ```
 
-`offwhite` only operates when `.editorconfig` policy in effect for a given path contains `charset = utf-8`.
+`offwhite` requires each target path to resolve to a root `.editorconfig`.
+If the root `.editorconfig` does not declare `charset = utf-8` in any section, `offwhite` warns.
+Files are only scanned when matching `.editorconfig` sections declare `charset = utf-8`.
+If no discovered files match scanable `.editorconfig` sections, `offwhite` warns.
 When you pass explicit paths, `.editorconfig` lookup starts from each target path and walks upward from there, not from the shell's current working directory.
 Sections with alternative charset policies are skipped; in verbose mode, `offwhite` warns when this happens.
 Files that are not valid UTF-8 are skipped with a warning.
