@@ -1,6 +1,7 @@
+use std::ffi::OsString;
 use std::process::ExitCode;
 
-use pico_args::Arguments;
+use clap::{Arg, ArgAction, Command};
 
 const ROOT_HELP_TEMPLATE: &str = concat!(
     "Offwhite enforces .editconfig whitespace and newline settings\n",
@@ -19,10 +20,8 @@ const ROOT_HELP_TEMPLATE: &str = concat!(
     "  -h, --help                  Print help\n",
     "\n",
 );
-const ACTION_NAMES: &[&str] = &["init", "init-ignore-revs", "check", "fix"];
-const PARSE_ERROR_FOOTER: &str = "\nFor more information, try '--help'.";
 
-#[derive(Clone, Copy, PartialEq, Eq, PartialOrd, Ord)]
+#[derive(Clone, Copy, Debug, PartialEq, Eq, PartialOrd, Ord)]
 pub enum Verbosity {
     Quiet,
     Normal,
@@ -39,6 +38,8 @@ pub(crate) enum Action {
 }
 
 impl Action {
+    const ALL: [Self; 4] = [Self::Init, Self::InitIgnoreRevs, Self::Check, Self::Fix];
+
     fn as_str(self) -> &'static str {
         match self {
             Self::Init => "init",
@@ -47,16 +48,16 @@ impl Action {
             Self::Fix => "fix",
         }
     }
+
+    fn from_name(name: &str) -> Option<Self> {
+        Self::ALL.into_iter().find(|action| action.as_str() == name)
+    }
 }
 
+#[derive(Debug)]
 pub(crate) struct Cli {
-    options: Options,
     action: Action,
     paths: Vec<String>,
-}
-
-#[derive(Default)]
-struct Options {
     quiet: bool,
     verbose: bool,
     single_final_newline: bool,
@@ -73,7 +74,7 @@ impl Cli {
     }
 
     pub(crate) fn verbosity(&self) -> Verbosity {
-        match (self.options.quiet, self.options.verbose) {
+        match (self.quiet, self.verbose) {
             (true, _) => Verbosity::Quiet,
             (_, true) => Verbosity::Verbose,
             _ => Verbosity::Normal,
@@ -81,11 +82,11 @@ impl Cli {
     }
 
     pub(crate) fn single_final_newline(&self) -> bool {
-        self.options.single_final_newline
+        self.single_final_newline
     }
 
     pub(crate) fn no_ignore(&self) -> bool {
-        self.options.no_ignore
+        self.no_ignore
     }
 }
 
@@ -95,132 +96,116 @@ pub(crate) enum CliOutcome {
 }
 
 pub(crate) fn parse_cli() -> CliOutcome {
-    let args: Vec<_> = std::env::args_os().skip(1).collect();
-
-    if let Some(outcome) = maybe_handle_help(&args) {
-        return outcome;
-    }
-
-    match parse_cli_args(normalize_args(args)) {
+    match parse_cli_args(normalize_args(std::env::args_os().skip(1))) {
         Ok(cli) => CliOutcome::Run(cli),
-        Err(message) => {
-            eprintln!("error: {message}{PARSE_ERROR_FOOTER}");
-            CliOutcome::Exit(ExitCode::from(2))
+        Err(err) => {
+            let _ = err.print();
+            CliOutcome::Exit(ExitCode::from(err.exit_code() as u8))
         }
     }
 }
 
-fn parse_cli_args(args: Vec<std::ffi::OsString>) -> Result<Cli, String> {
-    let mut input = Arguments::from_vec(args);
-    let options = parse_options(&mut input)?;
-    let action = parse_action(&mut input)?;
-    let paths = parse_paths(input.finish(), action)?;
+fn parse_cli_args(args: Vec<OsString>) -> Result<Cli, clap::Error> {
+    let mut argv = Vec::with_capacity(args.len() + 1);
+    argv.push("offwhite".into());
+    argv.extend(args);
+
+    let matches = build_cli().try_get_matches_from(argv)?;
+    let (command, subcommand) = matches
+        .subcommand()
+        .expect("default action normalization should always provide a subcommand");
+    let action = Action::from_name(command).expect("configured subcommand should map to Action");
+    let paths = match action {
+        Action::Check | Action::Fix => subcommand
+            .get_many::<String>("paths")
+            .map(|paths| paths.cloned().collect())
+            .unwrap_or_else(|| vec![".".into()]),
+        Action::Init | Action::InitIgnoreRevs => Vec::new(),
+    };
 
     Ok(Cli {
-        options,
         action,
         paths,
+        quiet: matches.get_flag("quiet"),
+        verbose: matches.get_flag("verbose"),
+        single_final_newline: matches.get_flag("single-final-newline"),
+        no_ignore: matches.get_flag("no-ignore"),
     })
 }
 
-fn parse_options(input: &mut Arguments) -> Result<Options, String> {
-    let options = Options {
-        quiet: input.contains(["-q", "--quiet"]),
-        verbose: input.contains(["-v", "--verbose"]),
-        single_final_newline: input.contains("--single-final-newline"),
-        no_ignore: input.contains(["-u", "--no-ignore"]),
-    };
-
-    if options.quiet && options.verbose {
-        return Err("the '--quiet' and '--verbose' options cannot be used together".into());
-    }
-
-    Ok(options)
+fn build_cli() -> Command {
+    Command::new("offwhite")
+        .disable_version_flag(true)
+        .subcommand_required(true)
+        .override_help(ROOT_HELP_TEMPLATE)
+        .arg(
+            Arg::new("quiet")
+                .short('q')
+                .long("quiet")
+                .action(ArgAction::SetTrue)
+                .global(true)
+                .help("Suppress warnings")
+                .conflicts_with("verbose"),
+        )
+        .arg(
+            Arg::new("verbose")
+                .short('v')
+                .long("verbose")
+                .action(ArgAction::SetTrue)
+                .global(true)
+                .help("Increase logging output")
+                .conflicts_with("quiet"),
+        )
+        .arg(
+            Arg::new("single-final-newline")
+                .long("single-final-newline")
+                .action(ArgAction::SetTrue)
+                .global(true)
+                .help("Enforce exactly one trailing newline (disabled by default)"),
+        )
+        .arg(
+            Arg::new("no-ignore")
+                .long("no-ignore")
+                .short_alias('u')
+                .action(ArgAction::SetTrue)
+                .global(true)
+                .help("Do not respect .ignore or .gitignore files"),
+        )
+        .subcommand(scan_command("check", "Check for violations"))
+        .subcommand(scan_command("fix", "Fix files in place"))
+        .subcommand(Command::new("init").about("Create an example .editorconfig"))
+        .subcommand(
+            Command::new("init-ignore-revs").about("Create an example .git-blame-ignore-revs"),
+        )
 }
 
-fn parse_action(input: &mut Arguments) -> Result<Action, String> {
-    let Some(command) = input
-        .opt_free_from_str::<String>()
-        .map_err(|err| err.to_string())?
-    else {
-        return Err("internal error: missing default action".into());
-    };
-
-    parse_action_name(&command).ok_or_else(|| format!("unrecognized subcommand '{command}'"))
+fn scan_command(name: &'static str, about: &'static str) -> Command {
+    Command::new(name)
+        .about(about)
+        .arg(Arg::new("paths").value_name("PATHS").num_args(0..))
 }
 
-fn parse_paths(remaining: Vec<std::ffi::OsString>, action: Action) -> Result<Vec<String>, String> {
-    match action {
-        Action::Check | Action::Fix => parse_check_paths(remaining),
-        Action::Init | Action::InitIgnoreRevs => parse_init_args(remaining),
-    }
-}
-
-fn parse_check_paths(remaining: Vec<std::ffi::OsString>) -> Result<Vec<String>, String> {
-    let mut paths = Vec::new();
-    let mut literal_paths = false;
-
-    for arg in remaining {
-        if !literal_paths && arg == "--" {
-            literal_paths = true;
-            continue;
-        }
-
-        let value = arg
-            .into_string()
-            .map_err(|_| "argument is not a UTF-8 string".to_string())?;
-        if !literal_paths && value.starts_with('-') {
-            return Err(format!("unrecognized option '{value}'"));
-        }
-        paths.push(value);
-    }
-
-    if paths.is_empty() {
-        paths.push(".".into());
-    }
-
-    Ok(paths)
-}
-
-fn parse_init_args(remaining: Vec<std::ffi::OsString>) -> Result<Vec<String>, String> {
-    if let Some(arg) = remaining.into_iter().next() {
-        let value = arg
-            .into_string()
-            .map_err(|_| "argument is not a UTF-8 string".to_string())?;
-        if value.starts_with('-') {
-            Err(format!("unrecognized option '{value}'"))
-        } else {
-            Err(format!("unexpected argument '{value}'"))
-        }
-    } else {
-        Ok(Vec::new())
-    }
-}
-
-fn maybe_handle_help(args: &[std::ffi::OsString]) -> Option<CliOutcome> {
-    if args.iter().any(|arg| is_help_arg(arg)) {
-        print!("{ROOT_HELP_TEMPLATE}");
-        Some(CliOutcome::Exit(ExitCode::SUCCESS))
-    } else {
-        None
-    }
-}
-
-fn normalize_args<I>(args: I) -> Vec<std::ffi::OsString>
+fn normalize_args<I>(args: I) -> Vec<OsString>
 where
-    I: IntoIterator<Item = std::ffi::OsString>,
+    I: IntoIterator<Item = OsString>,
 {
     let args: Vec<_> = args.into_iter().collect();
     if args.is_empty() {
         return vec![Action::Check.as_str().into()];
     }
 
-    if args.iter().any(|arg| is_help_arg(arg)) {
-        return args;
-    }
-
-    match first_positional_arg(&args) {
-        Some((_, value)) if is_action_name(value) => args,
+    match args
+        .iter()
+        .enumerate()
+        .find(|(_, arg)| arg.as_os_str() == "--" || !arg.to_string_lossy().starts_with('-'))
+    {
+        Some((_, value))
+            if value
+                .to_str()
+                .is_some_and(|value| Action::from_name(value).is_some()) =>
+        {
+            args
+        }
         Some((idx, _)) => insert_default_check(args, idx),
         None => {
             let mut normalized = args;
@@ -230,35 +215,96 @@ where
     }
 }
 
-fn is_help_arg(arg: &std::ffi::OsStr) -> bool {
-    matches!(arg.to_str(), Some("-h" | "--help"))
-}
-
-fn first_positional_arg(args: &[std::ffi::OsString]) -> Option<(usize, &std::ffi::OsStr)> {
-    args.iter()
-        .enumerate()
-        .find(|(_, arg)| arg.as_os_str() == "--" || !arg.to_string_lossy().starts_with('-'))
-        .map(|(idx, arg)| (idx, arg.as_os_str()))
-}
-
-fn is_action_name(arg: &std::ffi::OsStr) -> bool {
-    arg.to_str()
-        .is_some_and(|value| ACTION_NAMES.contains(&value))
-}
-
-fn parse_action_name(name: &str) -> Option<Action> {
-    match name {
-        "init" => Some(Action::Init),
-        "init-ignore-revs" => Some(Action::InitIgnoreRevs),
-        "check" => Some(Action::Check),
-        "fix" => Some(Action::Fix),
-        _ => None,
-    }
-}
-
-fn insert_default_check(args: Vec<std::ffi::OsString>, idx: usize) -> Vec<std::ffi::OsString> {
+fn insert_default_check(args: Vec<OsString>, idx: usize) -> Vec<OsString> {
     let mut normalized = args[..idx].to_vec();
     normalized.push(Action::Check.as_str().into());
     normalized.extend_from_slice(&args[idx..]);
     normalized
+}
+
+#[cfg(test)]
+mod tests {
+    use super::{Action, Verbosity, normalize_args, parse_cli_args};
+    use clap::error::ErrorKind;
+    use std::ffi::OsString;
+
+    fn parse(args: &[&str]) -> Result<super::Cli, clap::Error> {
+        parse_cli_args(normalize_args(args.iter().map(OsString::from)))
+    }
+
+    #[test]
+    fn defaults_to_check_and_current_directory() {
+        let cli = parse(&[]).unwrap();
+
+        assert_eq!(cli.action(), Action::Check);
+        assert_eq!(cli.paths(), ["."]);
+        assert_eq!(cli.verbosity(), Verbosity::Normal);
+    }
+
+    #[test]
+    fn treats_non_action_first_positional_as_check_path() {
+        let cli = parse(&["src"]).unwrap();
+
+        assert_eq!(cli.action(), Action::Check);
+        assert_eq!(cli.paths(), ["src"]);
+    }
+
+    #[test]
+    fn accepts_options_after_paths() {
+        let cli = parse(&["src", "-q"]).unwrap();
+
+        assert_eq!(cli.action(), Action::Check);
+        assert_eq!(cli.paths(), ["src"]);
+        assert_eq!(cli.verbosity(), Verbosity::Quiet);
+    }
+
+    #[test]
+    fn accepts_hidden_short_alias_for_no_ignore() {
+        let cli = parse(&["fix", "-u"]).unwrap();
+
+        assert_eq!(cli.action(), Action::Fix);
+        assert!(cli.no_ignore());
+    }
+
+    #[test]
+    fn supports_literal_hyphen_paths_after_double_dash() {
+        let cli = parse(&["check", "--", "-stdin"]).unwrap();
+
+        assert_eq!(cli.paths(), ["-stdin"]);
+    }
+
+    #[test]
+    fn rejects_quiet_and_verbose_together() {
+        let err = parse(&["check", "--quiet", "--verbose"]).unwrap_err();
+
+        assert_eq!(err.kind(), ErrorKind::ArgumentConflict);
+    }
+
+    #[test]
+    fn rejects_unknown_options() {
+        let err = parse(&["check", "--wat"]).unwrap_err();
+
+        assert_eq!(err.kind(), ErrorKind::UnknownArgument);
+    }
+
+    #[test]
+    fn rejects_unexpected_init_args() {
+        let err = parse(&["init", "extra"]).unwrap_err();
+
+        assert_eq!(err.kind(), ErrorKind::UnknownArgument);
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn rejects_non_utf8_paths() {
+        use std::os::unix::ffi::OsStringExt;
+
+        let err = parse_cli_args(normalize_args(vec![
+            OsString::from("check"),
+            OsString::from_vec(vec![0x66, 0x6f, 0x80]),
+        ]))
+        .unwrap_err();
+
+        assert_eq!(err.kind(), ErrorKind::InvalidUtf8);
+    }
 }
