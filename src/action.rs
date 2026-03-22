@@ -401,7 +401,6 @@ fn fix_would_change(contents: &[u8], policy: FilePolicy) -> bool {
 
         if pending_empty_lines > 0 {
             output_is_empty = false;
-            output_ends_with_newline = true;
             pending_empty_lines = 0;
         }
 

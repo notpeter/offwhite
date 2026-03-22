@@ -5,6 +5,14 @@ Check and fix trailing whitespace and final newlines, driven by `.editorconfig`.
 > [!NOTE]
 > Work in progress
 
+## Installation
+
+Install from GitHub with Cargo:
+
+```sh
+cargo install --git https://github.com/notpeter/offwhite.git offwhite
+```
+
 ## Usage
 
 ```
