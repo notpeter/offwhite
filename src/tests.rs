@@ -148,6 +148,38 @@ fn walk_paths_directory_argument_still_applies_default_lockfile_ignores() {
 }
 
 #[test]
+fn walk_paths_directory_argument_still_applies_default_license_ignores() {
+    let dir = TempDir::new().unwrap();
+    write_temp(dir.path(), ".editorconfig", "root = true\n");
+    let subdir = dir.path().join("project");
+    fs::create_dir(&subdir).unwrap();
+    let license = write_temp(&subdir, "LICENSE", "");
+    let licence_md = write_temp(&subdir, "licence.md", "");
+    let copying = write_temp(&subdir, "COPYING", "");
+    let notice = write_temp(&subdir, "NOTICE", "");
+    let source = write_temp(&subdir, "main.rs", "fn main() {}\n");
+
+    let files = collect_walked_paths(&[subdir.display().to_string()], true);
+
+    assert!(files.contains(&source));
+    assert!(!files.contains(&license));
+    assert!(!files.contains(&licence_md));
+    assert!(!files.contains(&copying));
+    assert!(!files.contains(&notice));
+}
+
+#[test]
+fn walk_paths_explicit_file_argument_still_applies_default_license_ignores() {
+    let dir = TempDir::new().unwrap();
+    write_temp(dir.path(), ".editorconfig", "root = true\n");
+    let license = write_temp(dir.path(), "unlicense.md", "");
+
+    let files = collect_walked_paths(&[license.display().to_string()], true);
+
+    assert!(!files.contains(&license));
+}
+
+#[test]
 fn walk_paths_directory_argument_respects_ignore_files() {
     let dir = TempDir::new().unwrap();
     write_temp(dir.path(), ".editorconfig", "root = true\n");
@@ -162,6 +194,18 @@ fn walk_paths_directory_argument_respects_ignore_files() {
     let files = collect_walked_paths(&[dir.path().display().to_string()], true);
 
     assert!(files.contains(&kept));
+    assert!(!files.contains(&ignored));
+}
+
+#[test]
+fn walk_paths_explicit_file_argument_respects_ignore_files() {
+    let dir = TempDir::new().unwrap();
+    write_temp(dir.path(), ".editorconfig", "root = true\n");
+    write_temp(dir.path(), ".ignore", "generated.txt\n");
+    let ignored = write_temp(dir.path(), "generated.txt", "ignored");
+
+    let files = collect_walked_paths(&[ignored.display().to_string()], true);
+
     assert!(!files.contains(&ignored));
 }
 

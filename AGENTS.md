@@ -5,14 +5,16 @@
 `offwhite` is a single-binary Rust crate.
 Core behavior lives under `src/`:
 
-- src/args.rs: parses CLI arguments and renders help text,
-- src/main.rs: wires startup flow and command dispatch,
-- src/action.rs: handles scanning/checking/fixing,
-- src/configs.rs: derives policy from `.editorconfig`,
-- src/ignores.rs: defines bundled ignore rules.
-- src/inits.rs: has Initialization helpers,
+- src/action.rs: handles scanning/checking/fixing
+- src/args.rs: parses CLI arguments and renders help text
+- src/configs.rs: derives policy from `.editorconfig`
+- src/ignores.rs: defines bundled ignore rules
+- src/inits.rs: initialization helpers (editorconfig, ignore-revs templates)
+- src/list.rs: `list editorconfig` and `list extensions` commands
+- src/main.rs: wires startup flow and command dispatch
+- src/output.rs: stdout writing and broken-pipe handling
+- src/tests.rs: unit tests for args parsing
 - src/violation.rs: violation formatting
-- src/tests.rs: Unit tests
 
 ## Coding Style & Naming Conventions
 
@@ -29,7 +31,7 @@ cargo test -q
 
 ## Commit & Pull Request Guidelines
 
-Recent commits use short imperative subjects. Less is more; sentece fragments ok.
+Recent commits use short imperative subjects. Less is more; sentence fragments ok.
 Keep commit titles concise, action-oriented, and specific.
 
 Include sample command output when changing diagnostics or user-facing help text.

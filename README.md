@@ -83,13 +83,13 @@ Files that are not valid UTF-8 are skipped with a warning.
 
 ## Ignore / Exclusions
 
-Like ripgrep, by default `offwhite` will not process paths excluded by `.ignore`, `.gitignore`, `.git/info/exclude`, or global Git Ignore files (use `--no-ignore` to bypass).
+Like ripgrep, by default `offwhite` will not process paths excluded by `.ignore`, `.gitignore`, `.git/info/exclude`, or global Git Ignore files (use `--no-ignore` to bypass). This applies to explicitly named files as well as directory walks.
 Unlike `ripgrep`, directories with a leading `.` are not skipped to ensure things like `.github/**` are checked.
 
 Additionally, `offwhite` bundles an ignore list which by-default excludes:
 
 - Source control directories: `.git/`, `.svn/`, `.hg/`
-- License files: `license*`, `COPYING`, etc
+- Common license such as `LICENSE`, `LICENCE.md`, `COPYING`, etc
 - Lockfiles: `*.lock`, `*.lock.json`, `*.lock.{yaml,yml}`, `go.sum`, etc
 - Patch files: `*.patch`, `*.diff`, `*.rej`, `*.patchset`.
 - extensions likely to contain binary content (`*.png`, `*.exe`, `*.jpg`, etc).
@@ -181,7 +181,8 @@ files or (c) pass explicit files or directories at runtime.
 >   There is a size limit to these arguments (`getconf ARG_MAX`), typically 1 or 2 MB, but sometimes smaller.
 > - Globs in [src/ignores.rs](src/ignores.rs) are case insensitive.
 > - [`.editorconfig` wildcards](https://editorconfig.org/#wildcards) are case-sensitive globs
->   and support complex globbing syntax like `[**/tests/{output/*,*.out.txt}]`, `[*.[Pp][Yy]]`
+>   and support braced globbing syntax like `[**/tests/{output/*,*.out.txt}]`, `[*.[Pp][Yy]]`;
+>   globs are limited to a single (no: `
 > - To match files non-recursively, use a leading slash in the `.editorconfig` section like `[/*.md]`
 
 ## Git Blame Ignore Revs

@@ -43,15 +43,10 @@ impl WalkOptions {
     }
 }
 
-fn walk_dir(
-    dir: &Path,
-    options: WalkOptions,
-    mut on_file: impl FnMut(PathBuf) -> io::Result<()>,
-) -> io::Result<()> {
-    let mut builder = WalkBuilder::new(dir);
+fn configure_walk_builder(builder: &mut WalkBuilder, base: &Path, options: WalkOptions) {
     let default_ignores = options
         .use_default_ignores
-        .then(|| build_default_ignores(dir));
+        .then(|| build_default_ignores(base));
     builder
         .ignore(options.respect_ignore_files)
         .git_ignore(options.respect_ignore_files)
@@ -78,12 +73,54 @@ fn walk_dir(
                 .is_ignore()
         })
     });
+}
+
+fn walk_dir(
+    dir: &Path,
+    options: WalkOptions,
+    mut on_file: impl FnMut(PathBuf) -> io::Result<()>,
+) -> io::Result<()> {
+    let mut builder = WalkBuilder::new(dir);
+    configure_walk_builder(&mut builder, dir, options);
 
     let walker = builder.build();
 
     for entry in walker {
         match entry {
             Ok(e) if e.file_type().is_some_and(|ft| ft.is_file()) => {
+                on_file(e.into_path())?;
+            }
+            Err(e) => eprintln!("walk error: {e}"),
+            _ => {}
+        }
+    }
+
+    Ok(())
+}
+
+fn walk_file(
+    path: &Path,
+    options: WalkOptions,
+    mut on_file: impl FnMut(PathBuf) -> io::Result<()>,
+) -> io::Result<()> {
+    let Some(file_name) = path.file_name() else {
+        return Ok(());
+    };
+    let parent = path
+        .parent()
+        .filter(|p| !p.as_os_str().is_empty())
+        .unwrap_or(Path::new("."));
+
+    let mut builder = WalkBuilder::new(parent);
+    configure_walk_builder(&mut builder, parent, options);
+    builder.max_depth(Some(1));
+
+    for entry in builder.build() {
+        match entry {
+            Ok(e)
+                if e.file_type().is_some_and(|ft| ft.is_file())
+                    && e.path().file_name().is_some_and(|name| name == file_name) =>
+            {
                 on_file(e.into_path())?;
             }
             Err(e) => eprintln!("walk error: {e}"),
@@ -102,7 +139,7 @@ pub(crate) fn walk_paths_with(
     for path in paths {
         let path = PathBuf::from(path);
         if path.is_file() {
-            on_file(path)?;
+            walk_file(&path, options, &mut on_file)?;
         } else if path.is_dir() {
             walk_dir(&path, options, &mut on_file)?;
         } else {
