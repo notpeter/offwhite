@@ -30,6 +30,8 @@ pub const DEFAULT_GLOBS: &[&str] = &[
     "!*.psd",
     "!*.ai",
     "!*.eps",
+    // 3D
+    "!*.glb",
     // Audio
     "!*.mp3",
     "!*.wav",
