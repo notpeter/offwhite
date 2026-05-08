@@ -8,6 +8,7 @@ use ec4rs::glob::Glob;
 use crate::action::{WalkOptions, walk_paths_with};
 use crate::args::Verbosity;
 use crate::output::write_stdout;
+use crate::templates::template_names;
 
 const NO_EXTENSION_LABEL: &str = "[no extension]";
 
@@ -44,6 +45,14 @@ pub(crate) fn list_extensions(
     }
 
     Ok(found_failures)
+}
+
+pub(crate) fn list_templates() -> io::Result<()> {
+    for name in template_names() {
+        write_stdout(format_args!("{name}\n"))?;
+    }
+
+    Ok(())
 }
 
 pub(crate) fn discover_editorconfigs(

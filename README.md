@@ -17,12 +17,14 @@ cargo install --git https://github.com/notpeter/offwhite.git offwhite
 Offwhite enforces .editconfig whitespace and newline settings
 
 Usage:
-  offwhite check              Check for violations
-  offwhite fix                Fix files in place
-  offwhite list editorconfig  List and validate .editorconfig files
-  offwhite list extensions    Summarize file extensions in the tree
-  offwhite init editorconfig  Create an example .editorconfig
-  offwhite init ignore-revs   Create an example .git-blame-ignore-revs
+  offwhite check                         Check for violations
+  offwhite fix                           Fix files in place
+  offwhite list editorconfig             List and validate .editorconfig files
+  offwhite list extensions               Summarize file extensions in the tree
+  offwhite list templates                List available example templates
+  offwhite init editorconfig [template]  Create an example .editorconfig
+  offwhite init editorconfig list        List available example templates
+  offwhite init ignore-revs              Create an example .git-blame-ignore-revs
 
 Options:
   -q, --quiet                 Suppress warnings
@@ -51,6 +53,7 @@ Offwhite enforces compliance with the follow `.editorconfig` keys (when set):
 | `end_of_line = lf`                | Check/fix line endings (`lf` or `crlf`)      |
 | `trim_trailing_whitespace = true` | Check/fix trailing whitespace on lines       |
 | `insert_final_newline = true`     | Check/fix missing or extra trailing newlines |
+| `indent_style = space`            | Check indentation for tabs                   |
 
 ## Initialization
 
@@ -73,11 +76,13 @@ trim_trailing_whitespace = true
 insert_final_newline = true
 ```
 
+Use `offwhite init editorconfig [name]` to use an alternate template.
+Available templates: `default`, `gnu`, `java`, `lua`, `rust`, `typescript`
+
 `offwhite` requires each target path to resolve to a root `.editorconfig`.
 If the root `.editorconfig` does not declare `charset = utf-8` in any section, `offwhite` warns.
 Files are only scanned when matching `.editorconfig` sections declare `charset = utf-8`.
 If no discovered files match scanable `.editorconfig` sections, `offwhite` warns.
-When you pass explicit paths, `.editorconfig` lookup starts from each target path and walks upward from there, not from the shell's current working directory.
 Sections with alternative charset policies are skipped; in verbose mode, `offwhite` warns when this happens.
 Files that are not valid UTF-8 are skipped with a warning.
 
@@ -179,11 +184,10 @@ files or (c) pass explicit files or directories at runtime.
 >
 > - Globs like `offwhite **/*.md` will be expanded by your shell, passing a list of files to `offwhite` as arguments.
 >   There is a size limit to these arguments (`getconf ARG_MAX`), typically 1 or 2 MB, but sometimes smaller.
-> - Globs in [src/ignores.rs](src/ignores.rs) are case insensitive.
-> - [`.editorconfig` wildcards](https://editorconfig.org/#wildcards) are case-sensitive globs
->   and support braced globbing syntax like `[**/tests/{output/*,*.out.txt}]`, `[*.[Pp][Yy]]`;
->   globs are limited to a single (no: `
+> - [`.editorconfig` wildcards](https://editorconfig.org/#wildcards) are case-sensitive
+>   they support braced globbing syntax like `[**/tests/{output/*,*.out.txt}]`, `[*.[Pp][Yy]]`
 > - To match files non-recursively, use a leading slash in the `.editorconfig` section like `[/*.md]`
+> - Built-in ignore Globs in [src/ignores.rs](src/ignores.rs) are case insensitive (`.exe` ignores `.EXE`)
 
 ## Git Blame Ignore Revs
 
@@ -213,8 +217,10 @@ Offwhite supports enforcing the following EditorConfig directives on UTF-8 files
 - `trim_trailing_whitespace = true`
 - `end_of_line = lf`
 - `end_of_line = crlf`
+- `indent_style = space`
 
-It ignores and does not check [other EditorConfig Properties](https://github.com/editorconfig/editorconfig/wiki/EditorConfig-Properties) like:
+It ignores and does not check/enforce
+[other EditorConfig Properties](https://github.com/editorconfig/editorconfig/wiki/EditorConfig-Properties) like:
 
 ```editorconfig
 charset = latin1

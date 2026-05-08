@@ -23,13 +23,29 @@ impl LineEnding {
     }
 }
 
-/// What to check/fix for a given file, derived from .editorconfig.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum IndentStyle {
+    Tab,
+    Space,
+}
+
+impl IndentStyle {
+    pub fn as_str(self) -> &'static str {
+        match self {
+            Self::Tab => "tab",
+            Self::Space => "space",
+        }
+    }
+}
+
+/// What to check/fix for a given file, derived from .editorconfig.
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Default)]
 pub struct FilePolicy {
     pub trim_trailing_whitespace: bool,
     pub insert_final_newline: bool,
     pub single_final_newline: bool,
     pub end_of_line: Option<LineEnding>,
+    pub indent_style: Option<IndentStyle>,
 }
 
 #[derive(Clone)]
@@ -98,18 +114,17 @@ impl PolicyCache {
             return policy.clone();
         }
 
-        let decision = self.properties_for(&normalized).map_or_else(
-            || PolicyDecision::default(),
-            |resolved| PolicyDecision {
-                policy: if resolved.has_matching_utf8_section {
-                    policy_from_properties(&resolved.props)
-                } else {
-                    FilePolicy::default()
-                },
-                has_matching_utf8_section: resolved.has_matching_utf8_section,
-                skipped_non_utf8_sections: resolved.skipped_non_utf8_sections,
-            },
-        );
+        let decision =
+            self.properties_for(&normalized)
+                .map_or_else(PolicyDecision::default, |resolved| PolicyDecision {
+                    policy: if resolved.has_matching_utf8_section {
+                        policy_from_properties(&resolved.props)
+                    } else {
+                        FilePolicy::default()
+                    },
+                    has_matching_utf8_section: resolved.has_matching_utf8_section,
+                    skipped_non_utf8_sections: resolved.skipped_non_utf8_sections,
+                });
         self.policies.insert(normalized, decision.clone());
         decision
     }
@@ -274,17 +289,6 @@ impl PolicyCache {
     }
 }
 
-impl Default for FilePolicy {
-    fn default() -> Self {
-        Self {
-            trim_trailing_whitespace: false,
-            insert_final_newline: false,
-            single_final_newline: false,
-            end_of_line: None,
-        }
-    }
-}
-
 #[derive(Default)]
 struct ResolvedProperties {
     props: Properties,
@@ -307,6 +311,11 @@ fn policy_from_properties(props: &Properties) -> FilePolicy {
             Ok(ec4rs::property::EndOfLine::Lf) => Some(LineEnding::Lf),
             Ok(ec4rs::property::EndOfLine::CrLf) => Some(LineEnding::CrLf),
             Ok(ec4rs::property::EndOfLine::Cr) => Some(LineEnding::Cr),
+            _ => None,
+        },
+        indent_style: match props.get::<ec4rs::property::IndentStyle>() {
+            Ok(ec4rs::property::IndentStyle::Tabs) => Some(IndentStyle::Tab),
+            Ok(ec4rs::property::IndentStyle::Spaces) => Some(IndentStyle::Space),
             _ => None,
         },
     }

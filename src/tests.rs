@@ -6,11 +6,12 @@ use crate::{
     action::{FileStatus, check_file_with, fix_file, walk_paths},
     args::Verbosity,
     collect_scan_paths,
-    configs::{FilePolicy, LineEnding, PolicyCache, RootConfig},
+    configs::{FilePolicy, IndentStyle, LineEnding, PolicyCache, RootConfig},
     list::{
         discover_editorconfigs, render_extension_summary, summarize_extensions,
         validate_editorconfig,
     },
+    templates::{find_template, template_names},
     violation::ViolationKind,
 };
 
@@ -19,6 +20,7 @@ const ALL_CHECKS: FilePolicy = FilePolicy {
     insert_final_newline: true,
     single_final_newline: false,
     end_of_line: None,
+    indent_style: None,
 };
 
 const ALL_CHECKS_SINGLE: FilePolicy = FilePolicy {
@@ -26,6 +28,7 @@ const ALL_CHECKS_SINGLE: FilePolicy = FilePolicy {
     insert_final_newline: true,
     single_final_newline: true,
     end_of_line: None,
+    indent_style: None,
 };
 
 const TRIM_ONLY: FilePolicy = FilePolicy {
@@ -33,6 +36,7 @@ const TRIM_ONLY: FilePolicy = FilePolicy {
     insert_final_newline: false,
     single_final_newline: false,
     end_of_line: None,
+    indent_style: None,
 };
 
 const NEWLINE_ONLY: FilePolicy = FilePolicy {
@@ -40,6 +44,7 @@ const NEWLINE_ONLY: FilePolicy = FilePolicy {
     insert_final_newline: true,
     single_final_newline: false,
     end_of_line: None,
+    indent_style: None,
 };
 
 const NEWLINE_ONLY_SINGLE: FilePolicy = FilePolicy {
@@ -47,6 +52,7 @@ const NEWLINE_ONLY_SINGLE: FilePolicy = FilePolicy {
     insert_final_newline: true,
     single_final_newline: true,
     end_of_line: None,
+    indent_style: None,
 };
 
 const NO_CHECKS: FilePolicy = FilePolicy {
@@ -54,6 +60,7 @@ const NO_CHECKS: FilePolicy = FilePolicy {
     insert_final_newline: false,
     single_final_newline: false,
     end_of_line: None,
+    indent_style: None,
 };
 
 const CRLF_ONLY: FilePolicy = FilePolicy {
@@ -61,6 +68,23 @@ const CRLF_ONLY: FilePolicy = FilePolicy {
     insert_final_newline: false,
     single_final_newline: false,
     end_of_line: Some(LineEnding::CrLf),
+    indent_style: None,
+};
+
+const SPACE_INDENT_NO_SIZE: FilePolicy = FilePolicy {
+    trim_trailing_whitespace: false,
+    insert_final_newline: false,
+    single_final_newline: false,
+    end_of_line: None,
+    indent_style: Some(IndentStyle::Space),
+};
+
+const TAB_INDENT: FilePolicy = FilePolicy {
+    trim_trailing_whitespace: false,
+    insert_final_newline: false,
+    single_final_newline: false,
+    end_of_line: None,
+    indent_style: Some(IndentStyle::Tab),
 };
 
 fn write_temp(dir: &Path, name: &str, contents: &str) -> std::path::PathBuf {
@@ -267,6 +291,18 @@ fn summarize_extensions_counts_all_extensions_except_editorconfig() {
             "1\t.toml".to_string(),
         ]
     );
+}
+
+#[test]
+fn template_registry_lists_embedded_editorconfig_templates() {
+    let names: Vec<_> = template_names().collect();
+
+    assert_eq!(
+        names,
+        vec!["default", "gnu", "java", "lua", "rust", "typescript"]
+    );
+    assert!(find_template("default").is_some());
+    assert!(find_template("missing").is_none());
 }
 
 #[test]
@@ -574,6 +610,7 @@ fn check_reports_mixed_violation_kinds_in_order() {
         insert_final_newline: true,
         single_final_newline: false,
         end_of_line: Some(LineEnding::CrLf),
+        indent_style: None,
     };
 
     let violations = check_file(&path, policy).unwrap();
@@ -588,6 +625,50 @@ fn check_reports_mixed_violation_kinds_in_order() {
         ViolationKind::IncorrectLineEnding { .. }
     ));
     assert!(matches!(violations[2].kind, ViolationKind::NoFinalNewline));
+}
+
+#[test]
+fn check_space_indent_flags_lines_beginning_with_tabs() {
+    let dir = TempDir::new().unwrap();
+    let path = write_temp(dir.path(), "f.rs", "\tfn main() {}\n    ok();\n");
+
+    let violations = check_file(&path, SPACE_INDENT_NO_SIZE).unwrap();
+
+    assert_eq!(violations.len(), 1);
+    assert_eq!(violations[0].line, 1);
+    assert!(matches!(
+        violations[0].kind,
+        ViolationKind::IncorrectIndentStyle {
+            expected: IndentStyle::Space
+        }
+    ));
+}
+
+#[test]
+fn check_tab_indent_flags_spaces_before_tabs() {
+    let dir = TempDir::new().unwrap();
+    let path = write_temp(dir.path(), "f.rs", "  \tbad();\n\tgood();\n");
+
+    let violations = check_file(&path, TAB_INDENT).unwrap();
+
+    assert_eq!(violations.len(), 1);
+    assert_eq!(violations[0].line, 1);
+    assert!(matches!(
+        violations[0].kind,
+        ViolationKind::IncorrectIndentStyle {
+            expected: IndentStyle::Tab
+        }
+    ));
+}
+
+#[test]
+fn check_tab_indent_allows_gnu_style_tab_then_spaces() {
+    let dir = TempDir::new().unwrap();
+    let path = write_temp(dir.path(), "f.rs", "\t  ok();\n");
+
+    let violations = check_file(&path, TAB_INDENT).unwrap();
+
+    assert!(violations.is_empty());
 }
 
 // --- fix_file tests ---
@@ -661,13 +742,13 @@ fn fix_clean_readonly_file_skips_write() {
     let dir = TempDir::new().unwrap();
     let path = write_temp(dir.path(), "clean.rs", "hello\nworld\n");
     let mut permissions = fs::metadata(&path).unwrap().permissions();
+    let original_permissions = permissions.clone();
     permissions.set_readonly(true);
     fs::set_permissions(&path, permissions.clone()).unwrap();
 
     let result = fix_file(&path, ALL_CHECKS);
 
-    permissions.set_readonly(false);
-    fs::set_permissions(&path, permissions).unwrap();
+    fs::set_permissions(&path, original_permissions).unwrap();
 
     assert!(result.is_ok());
     assert_eq!(fs::read_to_string(&path).unwrap(), "hello\nworld\n");
@@ -737,6 +818,7 @@ fn fix_end_of_line_uses_configured_newline_for_inserted_final_newline() {
         insert_final_newline: true,
         single_final_newline: false,
         end_of_line: Some(LineEnding::CrLf),
+        indent_style: None,
     };
     fix_file(&path, policy).unwrap();
     assert_eq!(read_temp(&path), "hello\r\n");
@@ -755,7 +837,7 @@ fn fix_without_end_of_line_preserves_existing_crlf() {
 #[test]
 fn file_policy_reads_editorconfig() {
     let dir = TempDir::new().unwrap();
-    let ec = "root = true\n\n[*]\ncharset = utf-8\ntrim_trailing_whitespace = true\ninsert_final_newline = true\nend_of_line = crlf\n";
+    let ec = "root = true\n\n[*]\ncharset = utf-8\ntrim_trailing_whitespace = true\ninsert_final_newline = true\nend_of_line = crlf\nindent_style = space\n";
     write_temp(dir.path(), ".editorconfig", ec);
     let path = write_temp(dir.path(), "test.rs", "hello   ");
 
@@ -764,6 +846,7 @@ fn file_policy_reads_editorconfig() {
     assert!(policy.policy.trim_trailing_whitespace);
     assert!(policy.policy.insert_final_newline);
     assert_eq!(policy.policy.end_of_line, Some(LineEnding::CrLf));
+    assert_eq!(policy.policy.indent_style, Some(IndentStyle::Space));
 }
 
 #[test]
