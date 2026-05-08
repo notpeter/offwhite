@@ -5,6 +5,7 @@ mod ignores;
 mod inits;
 mod list;
 mod output;
+mod templates;
 mod violation;
 
 #[cfg(test)]
@@ -17,7 +18,7 @@ use crate::action::{RunState, process_file, walk_paths};
 use crate::args::{Action, CliOutcome, Verbosity, parse_cli};
 use crate::configs::PolicyCache;
 use crate::inits::{init_editorconfig, init_ignore_revs};
-use crate::list::{list_editorconfigs, list_extensions};
+use crate::list::{list_editorconfigs, list_extensions, list_templates};
 use crate::output::is_broken_pipe;
 
 fn main() -> ExitCode {
@@ -40,7 +41,7 @@ fn run() -> std::io::Result<ExitCode> {
 
     match action {
         Action::InitEditorconfig => {
-            return if init_editorconfig() {
+            return if init_editorconfig(cli.editorconfig_template()) {
                 Ok(ExitCode::SUCCESS)
             } else {
                 Ok(ExitCode::FAILURE)
@@ -68,6 +69,10 @@ fn run() -> std::io::Result<ExitCode> {
                     ExitCode::SUCCESS
                 },
             );
+        }
+        Action::ListTemplates => {
+            list_templates()?;
+            return Ok(ExitCode::SUCCESS);
         }
         Action::Check | Action::Fix => {}
     }

@@ -1,14 +1,6 @@
 use std::{fs, path::Path};
 
-const DEFAULT_EDITORCONFIG: &str = "\
-root = true
-
-[*]
-charset = utf-8
-end_of_line = lf
-trim_trailing_whitespace = true
-insert_final_newline = true
-";
+use crate::templates::{find_template, template_names};
 
 const DEFAULT_GIT_BLAME_IGNORE_REVS: &str = "\
 # .git-blame-ignore-revs
@@ -45,16 +37,24 @@ pub fn init_ignore_revs() -> bool {
     true
 }
 
-pub fn init_editorconfig() -> bool {
+pub fn init_editorconfig(template_name: &str) -> bool {
+    let Some(template) = find_template(template_name) else {
+        eprintln!(
+            "error: unknown editorconfig template `{template_name}`; available templates: {}",
+            template_names().collect::<Vec<_>>().join(", ")
+        );
+        return false;
+    };
+
     let path = Path::new(".editorconfig");
     if path.exists() {
         eprintln!("error: .editorconfig already exists");
         return false;
     }
-    if let Err(e) = fs::write(path, DEFAULT_EDITORCONFIG) {
+    if let Err(e) = fs::write(path, template.contents) {
         eprintln!("error: failed to write .editorconfig: {e}");
         return false;
     }
-    println!("Created .editorconfig");
+    println!("Created .editorconfig from {template_name} template");
     true
 }

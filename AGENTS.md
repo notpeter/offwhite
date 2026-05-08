@@ -23,10 +23,11 @@ Follow Rust 2024 defaults and keep code `rustfmt`-clean.
 ## Runnables
 
 ```sh
-cargo run -q -- --help
-cargo fmt --check && cargo fmt
-cargo check
-cargo test -q
+cargo run --quiet -- --help
+cargo fmt --quiet
+cargo check --quiet
+cargo test --quiet
+cargo clippy --quiet --fix --allow-dirty
 ```
 
 ## Commit & Pull Request Guidelines

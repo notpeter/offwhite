@@ -1,6 +1,6 @@
 use std::path::Path;
 
-use crate::configs::LineEnding;
+use crate::configs::{IndentStyle, LineEnding};
 
 #[derive(Clone)]
 pub struct Violation<'a> {
@@ -17,6 +17,9 @@ pub enum ViolationKind {
     IncorrectLineEnding {
         expected: LineEnding,
         found: LineEnding,
+    },
+    IncorrectIndentStyle {
+        expected: IndentStyle,
     },
 }
 
@@ -40,6 +43,13 @@ impl std::fmt::Display for Violation<'_> {
                     "{path}:{line}: incorrect line ending: expected {}, found {}",
                     expected.as_str(),
                     found.as_str()
+                )
+            }
+            ViolationKind::IncorrectIndentStyle { expected } => {
+                write!(
+                    f,
+                    "{path}:{line}: incorrect indent style: expected {}",
+                    expected.as_str()
                 )
             }
         }

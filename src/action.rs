@@ -3,7 +3,7 @@ use std::io;
 use std::path::{Path, PathBuf};
 
 use crate::args::{Action, Verbosity};
-use crate::configs::{FilePolicy, LineEnding, PolicyCache};
+use crate::configs::{FilePolicy, IndentStyle, LineEnding, PolicyCache};
 use crate::ignores::build_default_ignores;
 use crate::output::{is_broken_pipe, write_stdout};
 use crate::violation::{Violation, ViolationKind};
@@ -216,6 +216,7 @@ pub(crate) fn process_file(
     if !policy.trim_trailing_whitespace
         && !policy.insert_final_newline
         && policy.end_of_line.is_none()
+        && policy.indent_style.is_none()
     {
         return Ok(());
     }
@@ -227,7 +228,8 @@ pub(crate) fn process_file(
         Action::InitEditorconfig
         | Action::InitIgnoreRevs
         | Action::ListEditorconfig
-        | Action::ListExtensions => unreachable!(),
+        | Action::ListExtensions
+        | Action::ListTemplates => unreachable!(),
     }
 
     Ok(())
@@ -394,6 +396,36 @@ fn flush_pending_empty_lines(
     }
 }
 
+fn check_indentation(line: &[u8], policy: FilePolicy) -> Option<ViolationKind> {
+    let style = policy.indent_style?;
+
+    match style {
+        IndentStyle::Space => {
+            if line.starts_with(b"\t") {
+                Some(ViolationKind::IncorrectIndentStyle { expected: style })
+            } else {
+                None
+            }
+        }
+        IndentStyle::Tab => {
+            let mut saw_space = false;
+            for byte in line
+                .iter()
+                .take_while(|byte| matches!(**byte, b' ' | b'\t'))
+            {
+                match byte {
+                    b' ' => saw_space = true,
+                    b'\t' if saw_space => {
+                        return Some(ViolationKind::IncorrectIndentStyle { expected: style });
+                    }
+                    _ => {}
+                }
+            }
+            None
+        }
+    }
+}
+
 pub fn check_file_with<'a>(
     path: &'a Path,
     policy: FilePolicy,
@@ -410,29 +442,36 @@ pub fn check_file_with<'a>(
             return;
         }
 
-        if policy.trim_trailing_whitespace && (text.ends_with(b" ") || text.ends_with(b"\t")) {
-            if let Err(err) = emit_violation(
+        if policy.trim_trailing_whitespace
+            && (text.ends_with(b" ") || text.ends_with(b"\t"))
+            && let Err(err) = emit_violation(
                 path,
                 line_number,
                 ViolationKind::TrailingWhitespace,
                 &mut on_violation,
-            ) {
-                violation_error = Some(err);
-                return;
-            }
+            )
+        {
+            violation_error = Some(err);
+            return;
         }
 
-        if let (Some(expected), Some(found)) = (policy.end_of_line, ending) {
-            if found != expected {
-                if let Err(err) = emit_violation(
-                    path,
-                    line_number,
-                    ViolationKind::IncorrectLineEnding { expected, found },
-                    &mut on_violation,
-                ) {
-                    violation_error = Some(err);
-                }
-            }
+        if let Some(kind) = check_indentation(text, policy)
+            && let Err(err) = emit_violation(path, line_number, kind, &mut on_violation)
+        {
+            violation_error = Some(err);
+            return;
+        }
+
+        if let (Some(expected), Some(found)) = (policy.end_of_line, ending)
+            && found != expected
+            && let Err(err) = emit_violation(
+                path,
+                line_number,
+                ViolationKind::IncorrectLineEnding { expected, found },
+                &mut on_violation,
+            )
+        {
+            violation_error = Some(err);
         }
     });
 
@@ -440,26 +479,22 @@ pub fn check_file_with<'a>(
         return Err(err);
     }
 
-    if policy.insert_final_newline {
-        if !utf8_contents.is_empty() {
-            if !state.last_line_ended {
-                emit_violation(
-                    path,
-                    state.total_lines,
-                    ViolationKind::NoFinalNewline,
-                    &mut on_violation,
-                )?;
-            } else if policy.single_final_newline
-                && state.previous_line_ended
-                && state.last_line_empty
-            {
-                emit_violation(
-                    path,
-                    state.total_lines,
-                    ViolationKind::ExtraFinalNewlines,
-                    &mut on_violation,
-                )?;
-            }
+    if policy.insert_final_newline && !utf8_contents.is_empty() {
+        if !state.last_line_ended {
+            emit_violation(
+                path,
+                state.total_lines,
+                ViolationKind::NoFinalNewline,
+                &mut on_violation,
+            )?;
+        } else if policy.single_final_newline && state.previous_line_ended && state.last_line_empty
+        {
+            emit_violation(
+                path,
+                state.total_lines,
+                ViolationKind::ExtraFinalNewlines,
+                &mut on_violation,
+            )?;
         }
     }
 
@@ -477,10 +512,10 @@ fn fix_would_change(contents: &[u8], policy: FilePolicy) -> bool {
             changed = true;
         }
 
-        if let (Some(expected), Some(found)) = (policy.end_of_line, ending) {
-            if found != expected {
-                changed = true;
-            }
+        if let (Some(expected), Some(found)) = (policy.end_of_line, ending)
+            && found != expected
+        {
+            changed = true;
         }
 
         let trimmed_is_empty = if policy.trim_trailing_whitespace {
@@ -506,9 +541,7 @@ fn fix_would_change(contents: &[u8], policy: FilePolicy) -> bool {
     });
 
     if pending_empty_lines > 0 {
-        if policy.single_final_newline {
-            changed = true;
-        } else if output_is_empty && pending_empty_lines == 1 {
+        if policy.single_final_newline || output_is_empty && pending_empty_lines == 1 {
             changed = true;
         } else {
             output_is_empty = false;
@@ -547,11 +580,11 @@ pub fn fix_file(path: &Path, policy: FilePolicy) -> Result<FileStatus, Box<dyn s
             inferred_ending.get_or_insert(found);
         }
 
-        if let Some(found) = ending {
-            if trimmed_text.is_empty() {
-                pending_empty_lines.push(found);
-                return;
-            }
+        if let Some(found) = ending
+            && trimmed_text.is_empty()
+        {
+            pending_empty_lines.push(found);
+            return;
         }
 
         flush_pending_empty_lines(&mut output, &mut pending_empty_lines, policy);
@@ -561,10 +594,11 @@ pub fn fix_file(path: &Path, policy: FilePolicy) -> Result<FileStatus, Box<dyn s
         }
     });
 
-    if !pending_empty_lines.is_empty() && !policy.single_final_newline {
-        if !(output.is_empty() && pending_empty_lines.len() == 1) {
-            flush_pending_empty_lines(&mut output, &mut pending_empty_lines, policy);
-        }
+    if !(pending_empty_lines.is_empty()
+        || policy.single_final_newline
+        || output.is_empty() && pending_empty_lines.len() == 1)
+    {
+        flush_pending_empty_lines(&mut output, &mut pending_empty_lines, policy);
     }
 
     if policy.insert_final_newline
