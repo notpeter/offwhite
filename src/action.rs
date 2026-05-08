@@ -228,8 +228,7 @@ pub(crate) fn process_file(
         Action::InitEditorconfig
         | Action::InitIgnoreRevs
         | Action::ListEditorconfig
-        | Action::ListExtensions
-        | Action::ListTemplates => unreachable!(),
+        | Action::ListExtensions => unreachable!(),
     }
 
     Ok(())

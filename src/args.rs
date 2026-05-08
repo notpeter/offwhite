@@ -11,9 +11,7 @@ const ROOT_HELP_TEMPLATE: &str = concat!(
     "  offwhite fix                           Fix files in place\n",
     "  offwhite list editorconfig             List and validate .editorconfig files\n",
     "  offwhite list extensions               Summarize file extensions in the tree\n",
-    "  offwhite list templates                List available example templates\n",
-    "  offwhite init editorconfig [template]  Create an example .editorconfig\n",
-    "  offwhite init editorconfig list        List available example templates\n",
+    "  offwhite init editorconfig             Create an example .editorconfig\n",
     "  offwhite init ignore-revs              Create an example .git-blame-ignore-revs\n",
     "\n",
     "Options:\n",
@@ -38,7 +36,6 @@ pub(crate) enum Action {
     InitIgnoreRevs,
     ListEditorconfig,
     ListExtensions,
-    ListTemplates,
     #[default]
     Check,
     Fix,
@@ -49,7 +46,7 @@ impl Action {
         match self {
             Self::Check => "check",
             Self::Fix => "fix",
-            Self::ListEditorconfig | Self::ListExtensions | Self::ListTemplates => "list",
+            Self::ListEditorconfig | Self::ListExtensions => "list",
             Self::InitEditorconfig | Self::InitIgnoreRevs => "init",
         }
     }
@@ -63,7 +60,6 @@ pub(crate) struct Cli {
     verbose: bool,
     single_final_newline: bool,
     no_ignore: bool,
-    editorconfig_template: String,
 }
 
 impl Cli {
@@ -89,10 +85,6 @@ impl Cli {
 
     pub(crate) fn no_ignore(&self) -> bool {
         self.no_ignore
-    }
-
-    pub(crate) fn editorconfig_template(&self) -> &str {
-        &self.editorconfig_template
     }
 }
 
@@ -130,7 +122,6 @@ fn parse_cli_args(args: Vec<OsString>) -> Result<Cli, clap::Error> {
             let action = match subcommand_name {
                 "editorconfig" => Action::ListEditorconfig,
                 "extensions" => Action::ListExtensions,
-                "templates" => Action::ListTemplates,
                 _ => unreachable!("configured list subcommand should map to Action"),
             };
             (action, list_matches)
@@ -140,9 +131,6 @@ fn parse_cli_args(args: Vec<OsString>) -> Result<Cli, clap::Error> {
                 .subcommand()
                 .expect("configured init command should require a subcommand");
             let action = match subcommand_name {
-                "editorconfig" if init_matches.subcommand_name() == Some("list") => {
-                    Action::ListTemplates
-                }
                 "editorconfig" => Action::InitEditorconfig,
                 "ignore-revs" => Action::InitIgnoreRevs,
                 _ => unreachable!("configured init subcommand should map to Action"),
@@ -158,15 +146,7 @@ fn parse_cli_args(args: Vec<OsString>) -> Result<Cli, clap::Error> {
                 .map(|paths| paths.cloned().collect())
                 .unwrap_or_else(|| vec![".".into()])
         }
-        Action::InitEditorconfig | Action::InitIgnoreRevs | Action::ListTemplates => Vec::new(),
-    };
-    let editorconfig_template = if action == Action::InitEditorconfig {
-        action_matches
-            .get_one::<String>("template")
-            .cloned()
-            .unwrap_or_else(|| "default".into())
-    } else {
-        "default".into()
+        Action::InitEditorconfig | Action::InitIgnoreRevs => Vec::new(),
     };
 
     Ok(Cli {
@@ -176,7 +156,6 @@ fn parse_cli_args(args: Vec<OsString>) -> Result<Cli, clap::Error> {
         verbose: matches.get_flag("verbose"),
         single_final_newline: matches.get_flag("single-final-newline"),
         no_ignore: matches.get_flag("no-ignore"),
-        editorconfig_template,
     })
 }
 
@@ -232,20 +211,14 @@ fn build_cli() -> Command {
                 .subcommand(list_command(
                     "extensions",
                     "Summarize file extensions in the tree",
-                ))
-                .subcommand(Command::new("templates").about("List available example templates")),
+                )),
         )
         .subcommand(
             Command::new("init")
                 .about("Create example config files")
                 .subcommand_required(true)
                 .arg_required_else_help(true)
-                .subcommand(
-                    Command::new("editorconfig")
-                        .about("Create an example .editorconfig")
-                        .arg(Arg::new("template").value_name("TEMPLATE").num_args(0..=1))
-                        .subcommand(Command::new("list").about("List available example templates")),
-                )
+                .subcommand(Command::new("editorconfig").about("Create an example .editorconfig"))
                 .subcommand(
                     Command::new("ignore-revs").about("Create an example .git-blame-ignore-revs"),
                 ),
@@ -356,31 +329,21 @@ mod tests {
     }
 
     #[test]
-    fn parses_list_templates_without_paths() {
-        let cli = parse(&["list", "templates"]).unwrap();
-        assert_eq!(cli.action(), Action::ListTemplates);
-        assert!(cli.paths().is_empty());
-    }
-
-    #[test]
-    fn parses_init_editorconfig_list_as_template_listing() {
-        let cli = parse(&["init", "editorconfig", "list"]).unwrap();
-        assert_eq!(cli.action(), Action::ListTemplates);
-        assert!(cli.paths().is_empty());
-    }
-
-    #[test]
-    fn parses_init_editorconfig_with_default_template() {
+    fn parses_init_editorconfig() {
         let cli = parse(&["init", "editorconfig"]).unwrap();
         assert_eq!(cli.action(), Action::InitEditorconfig);
-        assert_eq!(cli.editorconfig_template(), "default");
     }
 
     #[test]
-    fn parses_init_editorconfig_with_named_template() {
-        let cli = parse(&["init", "editorconfig", "gnu"]).unwrap();
-        assert_eq!(cli.action(), Action::InitEditorconfig);
-        assert_eq!(cli.editorconfig_template(), "gnu");
+    fn rejects_unknown_list_subcommand() {
+        let err = parse(&["list", "unknown"]).unwrap_err();
+        assert_eq!(err.kind(), ErrorKind::InvalidSubcommand);
+    }
+
+    #[test]
+    fn rejects_init_editorconfig_list() {
+        let err = parse(&["init", "editorconfig", "list"]).unwrap_err();
+        assert_eq!(err.kind(), ErrorKind::UnknownArgument);
     }
 
     #[test]

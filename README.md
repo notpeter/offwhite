@@ -21,9 +21,7 @@ Usage:
   offwhite fix                           Fix files in place
   offwhite list editorconfig             List and validate .editorconfig files
   offwhite list extensions               Summarize file extensions in the tree
-  offwhite list templates                List available example templates
-  offwhite init editorconfig [template]  Create an example .editorconfig
-  offwhite init editorconfig list        List available example templates
+  offwhite init editorconfig             Create an example .editorconfig
   offwhite init ignore-revs              Create an example .git-blame-ignore-revs
 
 Options:
@@ -75,9 +73,6 @@ end_of_line = lf
 trim_trailing_whitespace = true
 insert_final_newline = true
 ```
-
-Use `offwhite init editorconfig [name]` to use an alternate template.
-Available templates: `default`, `gnu`, `java`, `lua`, `rust`, `typescript`
 
 `offwhite` requires each target path to resolve to a root `.editorconfig`.
 If the root `.editorconfig` does not declare `charset = utf-8` in any section, `offwhite` warns.
@@ -196,7 +191,7 @@ create a `.git-blame-ignore-revs` file which contain git commit ids which should
 transparent for git blame purposes. This means if you convert a tree from CRLF it is possible
 to preserve meaningful Git Blame information.
 
-Running `offwhite init ignore-revs` will create you an template `.git-blame-ignore-revs` file
+Running `offwhite init ignore-revs` will create you a template `.git-blame-ignore-revs` file
 which contains instructions on how to configure git repo locally to use that file. GitHub and
 GitLab natively support this out of the box.
 

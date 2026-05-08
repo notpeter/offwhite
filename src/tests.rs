@@ -11,7 +11,6 @@ use crate::{
         discover_editorconfigs, render_extension_summary, summarize_extensions,
         validate_editorconfig,
     },
-    templates::{find_template, template_names},
     violation::ViolationKind,
 };
 
@@ -291,18 +290,6 @@ fn summarize_extensions_counts_all_extensions_except_editorconfig() {
             "1\t.toml".to_string(),
         ]
     );
-}
-
-#[test]
-fn template_registry_lists_embedded_editorconfig_templates() {
-    let names: Vec<_> = template_names().collect();
-
-    assert_eq!(
-        names,
-        vec!["default", "gnu", "java", "lua", "rust", "typescript"]
-    );
-    assert!(find_template("default").is_some());
-    assert!(find_template("missing").is_none());
 }
 
 #[test]
