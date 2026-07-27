@@ -100,9 +100,17 @@ pub const DEFAULT_GLOBS: &[&str] = &[
     "!*.xlsx",
     "!*.ppt",
     "!*.pptx",
+    // OpenOffice OpenDocument (zip XML)
     "!*.odt",
+    "!*.ott",
     "!*.ods",
+    "!*.ots",
     "!*.odp",
+    "!*.otp",
+    "!*.odg",
+    "!*.otg",
+    "!*.odf",
+    "!*.odb",
     // Database
     "!*.sqlite",
     "!*.sqlite3",
