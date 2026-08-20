@@ -86,7 +86,7 @@ pub struct PolicyDecision {
 }
 
 #[derive(Clone, Debug, PartialEq, Eq)]
-pub struct RootConfig {
+pub struct EditorConfig {
     pub path: PathBuf,
     pub has_utf8_section: bool,
 }
@@ -129,7 +129,7 @@ impl PolicyCache {
         decision
     }
 
-    pub fn root_config(&mut self, start: &Path) -> Option<RootConfig> {
+    pub fn editorconfig_for(&mut self, start: &Path) -> Option<EditorConfig> {
         let normalized = self.normalize_target_path(start);
         let dir = if normalized.is_dir() {
             normalized
@@ -143,22 +143,24 @@ impl PolicyCache {
             return None;
         };
 
+        Some(EditorConfig {
+            path: stack.config_path.clone(),
+            has_utf8_section: self.config_stack_has_utf8_section(&stack),
+        })
+    }
+
+    fn config_stack_has_utf8_section(&mut self, stack: &ConfigStack) -> bool {
         let mut current = Some(stack);
         while let Some(node) = current {
-            let Ok(Some(parsed)) = self.parsed_config(&node.config_path) else {
-                current = node.parent.clone();
-                continue;
-            };
-            if parsed.is_root {
-                return Some(RootConfig {
-                    path: node.config_path.clone(),
-                    has_utf8_section: parsed.has_utf8_section,
-                });
+            if let Ok(Some(parsed)) = self.parsed_config(&node.config_path)
+                && parsed.has_utf8_section
+            {
+                return true;
             }
-            current = node.parent.clone();
+            current = node.parent.as_deref();
         }
 
-        None
+        false
     }
 
     fn normalize_target_path(&self, path: &Path) -> PathBuf {

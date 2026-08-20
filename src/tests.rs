@@ -6,7 +6,7 @@ use crate::{
     action::{FileStatus, check_file_with, fix_file, walk_paths},
     args::Verbosity,
     collect_scan_paths,
-    configs::{FilePolicy, IndentStyle, LineEnding, PolicyCache, RootConfig},
+    configs::{EditorConfig, FilePolicy, IndentStyle, LineEnding, PolicyCache},
     list::{
         discover_editorconfigs, render_extension_summary, summarize_extensions,
         validate_editorconfig,
@@ -349,7 +349,7 @@ fn collect_scan_paths_fails_for_missing_paths() {
 }
 
 #[test]
-fn collect_scan_paths_keeps_valid_paths_when_another_has_no_root_config() {
+fn collect_scan_paths_keeps_valid_paths_when_another_has_no_editorconfig() {
     let dir = TempDir::new().unwrap();
 
     let valid = dir.path().join("valid");
@@ -370,6 +370,24 @@ fn collect_scan_paths_keeps_valid_paths_when_another_has_no_root_config() {
 
     assert_eq!(scan_paths, vec![valid.display().to_string()]);
     assert!(found_failures);
+}
+
+#[test]
+fn collect_scan_paths_accepts_non_root_editorconfig() {
+    let dir = TempDir::new().unwrap();
+    write_temp(
+        dir.path(),
+        ".editorconfig",
+        "root = false\n\n[*]\ncharset = utf-8\n",
+    );
+
+    let paths = vec![dir.path().display().to_string()];
+    let mut policy_cache = PolicyCache::new();
+    let (scan_paths, found_failures) =
+        collect_scan_paths(&paths, &mut policy_cache, Verbosity::Normal);
+
+    assert_eq!(scan_paths, paths);
+    assert!(!found_failures);
 }
 // --- check_file tests ---
 
@@ -927,7 +945,7 @@ fn file_policy_uses_matching_utf8_section_from_same_stack() {
 }
 
 #[test]
-fn root_config_accepts_any_utf8_section() {
+fn editorconfig_for_accepts_any_utf8_section() {
     let dir = TempDir::new().unwrap();
     write_temp(
         dir.path(),
@@ -936,11 +954,11 @@ fn root_config_accepts_any_utf8_section() {
     );
 
     let mut cache = PolicyCache::new();
-    let root_config = cache.root_config(dir.path()).unwrap();
+    let editorconfig = cache.editorconfig_for(dir.path()).unwrap();
 
     assert_eq!(
-        root_config,
-        RootConfig {
+        editorconfig,
+        EditorConfig {
             path: dir.path().join(".editorconfig"),
             has_utf8_section: true,
         }
@@ -948,7 +966,28 @@ fn root_config_accepts_any_utf8_section() {
 }
 
 #[test]
-fn root_config_reports_missing_utf8_sections() {
+fn editorconfig_for_accepts_non_root_config() {
+    let dir = TempDir::new().unwrap();
+    write_temp(
+        dir.path(),
+        ".editorconfig",
+        "root = false\n\n[*.rs]\ncharset = utf-8\n",
+    );
+
+    let mut cache = PolicyCache::new();
+    let editorconfig = cache.editorconfig_for(dir.path()).unwrap();
+
+    assert_eq!(
+        editorconfig,
+        EditorConfig {
+            path: dir.path().join(".editorconfig"),
+            has_utf8_section: true,
+        }
+    );
+}
+
+#[test]
+fn editorconfig_for_reports_missing_utf8_sections() {
     let dir = TempDir::new().unwrap();
     write_temp(
         dir.path(),
@@ -957,11 +996,11 @@ fn root_config_reports_missing_utf8_sections() {
     );
 
     let mut cache = PolicyCache::new();
-    let root_config = cache.root_config(dir.path()).unwrap();
+    let editorconfig = cache.editorconfig_for(dir.path()).unwrap();
 
     assert_eq!(
-        root_config,
-        RootConfig {
+        editorconfig,
+        EditorConfig {
             path: dir.path().join(".editorconfig"),
             has_utf8_section: false,
         }
@@ -969,15 +1008,15 @@ fn root_config_reports_missing_utf8_sections() {
 }
 
 #[test]
-fn root_config_returns_none_when_missing() {
+fn editorconfig_for_returns_none_when_missing() {
     let dir = TempDir::new().unwrap();
     let target = dir.path().join("target");
     fs::create_dir(&target).unwrap();
 
     let mut cache = PolicyCache::new();
-    let root_config = cache.root_config(&target);
+    let editorconfig = cache.editorconfig_for(&target);
 
-    assert!(root_config.is_none());
+    assert!(editorconfig.is_none());
 }
 
 // --- no-op when both policies are off ---

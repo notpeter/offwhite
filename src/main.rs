@@ -109,7 +109,7 @@ fn collect_scan_paths(
 ) -> (Vec<String>, bool) {
     let mut scan_paths = Vec::new();
     let mut found_failures = false;
-    let mut warned_root_configs = std::collections::HashSet::new();
+    let mut warned_editorconfigs = std::collections::HashSet::new();
 
     for path in paths {
         let target = PathBuf::from(path);
@@ -119,10 +119,10 @@ fn collect_scan_paths(
             continue;
         }
 
-        let Some(root_config) = policy_cache.root_config(&target) else {
+        let Some(editorconfig) = policy_cache.editorconfig_for(&target) else {
             if verbosity >= Verbosity::Normal {
                 eprintln!(
-                    "warning: {}: no root .editorconfig file found; nothing checked",
+                    "warning: {}: no .editorconfig file found; nothing checked",
                     target.display()
                 );
             }
@@ -130,13 +130,13 @@ fn collect_scan_paths(
             continue;
         };
 
-        if !root_config.has_utf8_section
+        if !editorconfig.has_utf8_section
             && verbosity >= Verbosity::Normal
-            && warned_root_configs.insert(root_config.path.clone())
+            && warned_editorconfigs.insert(editorconfig.path.clone())
         {
             eprintln!(
-                "warning: {}: root .editorconfig does not declare `charset = utf-8` in any section",
-                root_config.path.display()
+                "warning: {}: no resolved .editorconfig declares `charset = utf-8` in any section",
+                editorconfig.path.display()
             );
         }
 

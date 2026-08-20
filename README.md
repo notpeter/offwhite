@@ -55,10 +55,9 @@ Offwhite enforces compliance with the follow `.editorconfig` keys (when set):
 
 ## Initialization
 
-To operate, `offwhite` requires a root `.editconfig`:
+To operate, `offwhite` requires a `.editorconfig`:
 
 ```editorconfig
-root = true
 [*]
 charset = utf-8
 ```
@@ -74,8 +73,8 @@ trim_trailing_whitespace = true
 insert_final_newline = true
 ```
 
-`offwhite` requires each target path to resolve to a root `.editorconfig`.
-If the root `.editorconfig` does not declare `charset = utf-8` in any section, `offwhite` warns.
+`offwhite` requires each target path to resolve to a `.editorconfig`.
+If the resolved `.editorconfig` stack does not declare `charset = utf-8` in any section, `offwhite` warns.
 Files are only scanned when matching `.editorconfig` sections declare `charset = utf-8`.
 If no discovered files match scanable `.editorconfig` sections, `offwhite` warns.
 Sections with alternative charset policies are skipped; in verbose mode, `offwhite` warns when this happens.
